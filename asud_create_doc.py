@@ -502,26 +502,43 @@ def main():
             # Выбираем Матус из результатов
             try:
                 time.sleep(PAUSE)
-                # Ищем в таблице результатов — div/td с текстом фамилии
-                results = driver.find_elements(By.XPATH,
-                    f"//div[contains(text(),'{surname}')] | //td[contains(text(),'{surname}')] | //span[contains(text(),'{surname}')]")
                 clicked = False
-                for res in results:
+
+                # Способ 1: Найти строку tr с классом OSHSGridStyle-row
+                rows = driver.find_elements(By.CSS_SELECTOR,
+                    "tr[class*='OSHSGridStyle-row'], tr[class*='obj-list-rec']")
+                for row in rows:
                     try:
-                        if not res.is_displayed():
+                        if not row.is_displayed():
                             continue
-                        # Пропускаем мелкие элементы (иконки, лейблы)
-                        size = res.size
-                        if size['width'] < 20 or size['height'] < 10:
-                            continue
-                        # Двойной клик — GXT-таблицы используют его для выбора
-                        ActionChains(driver).double_click(res).perform()
-                        print(f"  ОК Выбран (двойной клик): {person}")
-                        clicked = True
-                        time.sleep(PAUSE)
-                        break
+                        if surname in row.text:
+                            ActionChains(driver).double_click(row).perform()
+                            print(f"  ОК Выбран (двойной клик по строке): {person}")
+                            clicked = True
+                            time.sleep(PAUSE)
+                            break
                     except Exception:
                         continue
+
+                # Способ 2: Ищем по XPath любой элемент с текстом
+                if not clicked:
+                    results = driver.find_elements(By.XPATH,
+                        f"//*[contains(text(),'{surname}')]")
+                    for res in results:
+                        try:
+                            if not res.is_displayed():
+                                continue
+                            tag = res.tag_name.lower()
+                            if tag == 'input':
+                                continue
+                            ActionChains(driver).double_click(res).perform()
+                            print(f"  ОК Выбран (двойной клик): {person}")
+                            clicked = True
+                            time.sleep(PAUSE)
+                            break
+                        except Exception:
+                            continue
+
                 if not clicked:
                     print(f"  !! Не удалось кликнуть на {person}")
             except Exception:
