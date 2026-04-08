@@ -42,7 +42,7 @@ def get_driver_path():
         base_dir = os.path.dirname(os.path.abspath(__file__))
     driver_path = os.path.join(base_dir, "msedgedriver.exe")
     if not os.path.exists(driver_path):
-        print(f"!! msedgedriver.exe ne najden v: {base_dir}")
+        print(f"!! msedgedriver.exe не найден в: {base_dir}")
         input("Enter...")
         sys.exit(1)
     return driver_path
@@ -50,7 +50,7 @@ def get_driver_path():
 
 def safe_click(driver, element, description=""):
     """Несколько способов клика — от надёжного к запасному."""
-    print(f"  -> Klik: {description}")
+    print(f"  -> Клик: {description}")
     
     # Способ 1: JavaScript dispatchEvent (обход бага EdgeDriver)
     try:
@@ -60,7 +60,7 @@ def safe_click(driver, element, description=""):
             });
             arguments[0].dispatchEvent(evt);
         """, element)
-        print(f"  OK (JS dispatchEvent): {description}")
+        print(f"  ОК (JS dispatchEvent): {description}")
         time.sleep(0.5)
         return
     except Exception:
@@ -69,7 +69,7 @@ def safe_click(driver, element, description=""):
     # Способ 2: JavaScript .click()
     try:
         driver.execute_script("arguments[0].click();", element)
-        print(f"  OK (JS click): {description}")
+        print(f"  ОК (JS click): {description}")
         time.sleep(0.5)
         return
     except Exception:
@@ -78,7 +78,7 @@ def safe_click(driver, element, description=""):
     # Способ 3: ActionChains
     try:
         ActionChains(driver).move_to_element(element).pause(0.3).click().perform()
-        print(f"  OK (ActionChains): {description}")
+        print(f"  ОК (ActionChains): {description}")
         time.sleep(0.5)
         return
     except Exception:
@@ -87,14 +87,14 @@ def safe_click(driver, element, description=""):
     # Способ 4: Обычный клик
     try:
         element.click()
-        print(f"  OK (click): {description}")
+        print(f"  ОК (click): {description}")
         time.sleep(0.5)
     except Exception as e:
-        print(f"  !! Vse sposoby klika ne srabotali: {e}")
+        print(f"  !! Все способы клика не сработали: {e}")
 
 
 def wait_and_click(driver, by, selector, description="", timeout=TIMEOUT):
-    print(f"  -> Ozhidayu: {description or selector}")
+    print(f"  -> Ожидаю: {description or selector}")
     el = WebDriverWait(driver, timeout).until(
         EC.presence_of_element_located((by, selector))
     )
@@ -104,7 +104,7 @@ def wait_and_click(driver, by, selector, description="", timeout=TIMEOUT):
 
 
 def add_person_from_directory(driver, person_name, field_name):
-    print(f"\n  Dobavlyayu {field_name}: {person_name}")
+    print(f"\n  Добавляю {field_name}: {person_name}")
     time.sleep(2)
 
     search_field = None
@@ -119,13 +119,13 @@ def add_person_from_directory(driver, person_name, field_name):
             continue
 
     if not search_field:
-        print(f"  !! Ne najdeno pole poiska!")
+        print(f"  !! Не найдено поле поиска!")
         return
 
     surname = person_name.split()[0]
     search_field.clear()
     search_field.send_keys(surname)
-    print(f"  OK Familiya: {surname}")
+    print(f"  ОК Фамилия: {surname}")
     time.sleep(0.5)
 
     clicked = False
@@ -134,7 +134,7 @@ def add_person_from_directory(driver, person_name, field_name):
             btns = driver.find_elements(By.XPATH, sel)
             visible = [b for b in btns if b.is_displayed()]
             if visible:
-                safe_click(driver, visible[0], "Poisk")
+                safe_click(driver, visible[0], "Поиск")
                 clicked = True
                 break
         except Exception:
@@ -142,7 +142,7 @@ def add_person_from_directory(driver, person_name, field_name):
     if not clicked:
         search_field.send_keys(Keys.ENTER)
 
-    print("  Zhdu rezultaty...")
+    print("  Жду результаты...")
     time.sleep(3)
 
     try:
@@ -152,9 +152,9 @@ def add_person_from_directory(driver, person_name, field_name):
                 ActionChains(driver).double_click(result).perform()
             except Exception:
                 safe_click(driver, result, surname)
-            print(f"  OK Vybran: {person_name}")
+            print(f"  ОК Выбран: {person_name}")
     except Exception:
-        print(f"  !! Ne najden: {person_name}")
+        print(f"  !! Не найден: {person_name}")
 
     time.sleep(1)
 
@@ -164,7 +164,7 @@ def add_person_from_directory(driver, person_name, field_name):
             btns = driver.find_elements(By.XPATH, sel)
             visible = [b for b in btns if b.is_displayed()]
             if visible:
-                safe_click(driver, visible[0], "Podtverzhdenie")
+                safe_click(driver, visible[0], "Подтверждение")
                 break
         except Exception:
             continue
@@ -173,7 +173,7 @@ def add_person_from_directory(driver, person_name, field_name):
 
 def main():
     print("=" * 60)
-    print("ASUD IK - Sozdanie Sluzhebnoj zapiski")
+    print("АСУД ИК - Создание Служебной записки")
     print("=" * 60)
 
     driver_path = get_driver_path()
@@ -192,48 +192,48 @@ def main():
 
     try:
         # SHAG 1
-        print("\n[1/7] Otkryvayu ASUD...")
+        print("\n[1/7] Открываю АСУД...")
         driver.get(ASUD_URL)
-        print("  Zhdu zagruzku (10 sek)...")
+        print("  Жду загрузку (10 сек)...")
         time.sleep(10)
-        print("  OK Zagruzheno")
+        print("  ОК Загружено")
 
         # SHAG 2
-        print("\n[2/7] Knopka sozdaniya dokumenta...")
+        print("\n[2/7] Кнопка создания документа...")
         el = WebDriverWait(driver, TIMEOUT).until(
             EC.presence_of_element_located((By.ID, "mainscreen-create-button"))
         )
         time.sleep(2)
-        safe_click(driver, el, "Knopka sozdaniya")
+        safe_click(driver, el, "Кнопка создания")
         time.sleep(3)
 
         # SHAG 3
-        print("\n[3/7] Iskhodyashchij dokument...")
+        print("\n[3/7] Исходящий документ...")
         wait_and_click(driver, By.XPATH,
             "//div[contains(text(),'Исходящий документ')]",
-            "Iskhodyashchij dokument")
+            "Исходящий документ")
         time.sleep(1)
 
         # SHAG 4
-        print("\n[4/7] Sluzhebnaya zapiska...")
+        print("\n[4/7] Служебная записка...")
         wait_and_click(driver, By.XPATH,
             "//div[contains(text(),'Служебная записка')] | //td[contains(text(),'Служебная записка')]",
-            "Sluzhebnaya zapiska")
+            "Служебная записка")
         time.sleep(0.5)
 
         # SHAG 5
-        print("\n[5/7] Sozdat dokument...")
+        print("\n[5/7] Создать документ...")
         wait_and_click(driver, By.XPATH,
             "//button[contains(text(),'Создать документ')] | //div[contains(text(),'Создать документ')]",
-            "Sozdat dokument")
-        print("  Zhdu formu (5 sek)...")
+            "Создать документ")
+        print("  Жду форму (5 сек)...")
         time.sleep(5)
 
         # SHAG 6
-        print("\n[6/7] Zapolnyayu formu...")
+        print("\n[6/7] Заполняю форму...")
 
         # Kratkoe soderzhanie
-        print("\n  Kratkoe soderzhanie:")
+        print("\n  Краткое содержание:")
         try:
             textareas = driver.find_elements(By.TAG_NAME, "textarea")
             visible_ta = [ta for ta in textareas if ta.is_displayed()]
@@ -247,15 +247,15 @@ def main():
                     var evt2 = new Event('change', {bubbles: true});
                     arguments[0].dispatchEvent(evt2);
                 """, visible_ta[0])
-                print(f"  OK Zapolneno")
+                print(f"  ОК Заполнено")
             else:
-                print("  !! Textarea ne najdena")
+                print("  !! Textarea не найдена")
         except Exception as e:
-            print(f"  !! Oshibka: {e}")
+            print(f"  !! Ошибка: {e}")
         time.sleep(0.5)
 
         # Adresaty
-        print("\n  Adresaty:")
+        print("\n  Адресаты:")
         for person in DOC_DATA["адресаты"]:
             try:
                 plus_buttons = driver.find_elements(By.CSS_SELECTOR, "img[src*='add']")
@@ -263,14 +263,14 @@ def main():
                 if visible_plus:
                     safe_click(driver, visible_plus[0], f"+ {person}")
                     time.sleep(2)
-                    add_person_from_directory(driver, person, "Adresat")
+                    add_person_from_directory(driver, person, "Адресат")
                 else:
-                    print("  !! Knopka + ne najdena")
+                    print("  !! Кнопка + не найдена")
             except Exception as e:
-                print(f"  !! Oshibka: {e}")
+                print(f"  !! Ошибка: {e}")
 
         # Podpisanty
-        print("\n  Podpisanty:")
+        print("\n  Подписанты:")
         for person in DOC_DATA["подписанты"]:
             try:
                 plus_buttons = driver.find_elements(By.CSS_SELECTOR, "img[src*='add']")
@@ -280,12 +280,12 @@ def main():
                 elif visible_plus:
                     safe_click(driver, visible_plus[-1], f"+ {person}")
                 time.sleep(2)
-                add_person_from_directory(driver, person, "Podpisant")
+                add_person_from_directory(driver, person, "Подписант")
             except Exception as e:
-                print(f"  !! Oshibka: {e}")
+                print(f"  !! Ошибка: {e}")
 
         # Proekt
-        print("\n  Proekt:")
+        print("\n  Проект:")
         try:
             inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='text']")
             visible_inputs = [i for i in inputs if i.is_displayed()]
@@ -302,28 +302,28 @@ def main():
                         no_proj = driver.find_element(By.XPATH,
                             "//*[contains(translate(text(),'НЕТПРОКА','нетпрока'),'нет проекта')]")
                         if no_proj.is_displayed():
-                            safe_click(driver, no_proj, "Net proekta")
+                            safe_click(driver, no_proj, "Нет проекта")
                     except Exception:
                         pass
                     break
                 except Exception:
                     continue
         except Exception as e:
-            print(f"  !! Oshibka: {e}")
+            print(f"  !! Ошибка: {e}")
 
         # SHAG 7
-        print("\n[7/7] Gotovo!")
-        print("  Dokument NE sohranyon - prover dannye.")
+        print("\n[7/7] Готово!")
+        print("  Документ НЕ сохранён - проверь данные.")
 
-        input("\n  Enter dlya zakrytiya brauzera...")
+        input("\n  Enter для закрытия браузера...")
 
     except Exception as e:
-        print(f"\n!! Oshibka: {e}")
-        input("Enter dlya zakrytiya...")
+        print(f"\n!! Ошибка: {e}")
+        input("Enter для закрытия...")
 
     finally:
         driver.quit()
-        print("\nOK Brauzer zakryt.")
+        print("\nОК Браузер закрыт.")
 
 
 if __name__ == "__main__":
