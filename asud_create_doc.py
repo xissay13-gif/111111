@@ -501,24 +501,29 @@ def main():
 
             # Выбираем Матус из результатов
             try:
-                result = WebDriverWait(driver, TIMEOUT).until(
-                    EC.presence_of_element_located((By.XPATH,
-                        f"//*[contains(text(),'{surname}')]"))
-                )
-                # Ищем именно строку в таблице результатов, не поле ввода
+                time.sleep(PAUSE)
+                # Ищем в таблице результатов — div/td с текстом фамилии
                 results = driver.find_elements(By.XPATH,
-                    f"//*[contains(text(),'{surname}')]")
+                    f"//div[contains(text(),'{surname}')] | //td[contains(text(),'{surname}')] | //span[contains(text(),'{surname}')]")
+                clicked = False
                 for res in results:
                     try:
-                        if res == search_input:
+                        if not res.is_displayed():
                             continue
-                        if res.is_displayed():
-                            safe_click(driver, res, f"Выбор: {person}")
-                            print(f"  ОК Выбран: {person}")
-                            time.sleep(PAUSE)
-                            break
+                        # Пропускаем мелкие элементы (иконки, лейблы)
+                        size = res.size
+                        if size['width'] < 20 or size['height'] < 10:
+                            continue
+                        # Двойной клик — GXT-таблицы используют его для выбора
+                        ActionChains(driver).double_click(res).perform()
+                        print(f"  ОК Выбран (двойной клик): {person}")
+                        clicked = True
+                        time.sleep(PAUSE)
+                        break
                     except Exception:
                         continue
+                if not clicked:
+                    print(f"  !! Не удалось кликнуть на {person}")
             except Exception:
                 print(f"  !! Не найден: {person}")
 
