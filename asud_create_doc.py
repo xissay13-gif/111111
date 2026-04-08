@@ -212,60 +212,91 @@ def main():
                 time.sleep(5)
         if el is None:
             raise Exception("Кнопка создания документа не найдена после 3 попыток")
-        time.sleep(2)
+        time.sleep(5)
         safe_click(driver, el, "Кнопка создания")
-        time.sleep(3)
-
-        # SHAG 3
-        print("\n[3/7] Исходящий документ...")
-        wait_and_click(driver, By.XPATH,
-            "//div[contains(text(),'Исходящий документ')]",
-            "Исходящий документ")
-        print("  Жду загрузку подтипов (5 сек)...")
         time.sleep(5)
 
-        # Закрываем ошибку GWT если появилась
-        try:
-            close_btn = driver.find_element(By.XPATH, "//button[contains(text(),'Закрыть')]")
-            if close_btn.is_displayed():
-                safe_click(driver, close_btn, "Закрытие ошибки")
-                time.sleep(2)
-        except Exception:
-            pass
+        # SHAG 3 + 4: выбор типа и подтипа с перезапуском при ошибке
+        doc_selected = False
+        for full_attempt in range(3):
+            # Закрываем ошибку GWT если есть
+            try:
+                close_btn = driver.find_element(By.XPATH, "//button[contains(text(),'Закрыть')]")
+                if close_btn.is_displayed():
+                    safe_click(driver, close_btn, "Закрытие ошибки")
+                    time.sleep(5)
+            except Exception:
+                pass
 
-        # SHAG 4
-        print("\n[4/7] Служебная записка...")
-        el = None
-        for attempt in range(3):
+            # Шаг 3: Исходящий документ
+            print(f"\n[3/7] Исходящий документ... (попытка {full_attempt + 1}/3)")
+            try:
+                el = WebDriverWait(driver, TIMEOUT).until(
+                    EC.element_to_be_clickable((By.XPATH, "//div[contains(text(),'Исходящий документ')]"))
+                )
+                time.sleep(5)
+                safe_click(driver, el, "Исходящий документ")
+                print("  Жду загрузку подтипов (10 сек)...")
+                time.sleep(10)
+            except Exception:
+                print("  !! Не найден 'Исходящий документ', пробую заново...")
+                # Заново открываем диалог
+                try:
+                    create_btn = WebDriverWait(driver, TIMEOUT).until(
+                        EC.element_to_be_clickable((By.ID, "mainscreen-create-button"))
+                    )
+                    time.sleep(5)
+                    safe_click(driver, create_btn, "Кнопка создания (повтор)")
+                    time.sleep(5)
+                except Exception:
+                    pass
+                continue
+
+            # Закрываем ошибку GWT если появилась после клика
+            try:
+                close_btn = driver.find_element(By.XPATH, "//button[contains(text(),'Закрыть')]")
+                if close_btn.is_displayed():
+                    print("  !! Ошибка GWT, закрываю и пробую заново...")
+                    safe_click(driver, close_btn, "Закрытие ошибки")
+                    time.sleep(5)
+                    continue
+            except Exception:
+                pass
+
+            # Шаг 4: Служебная записка
+            print("\n[4/7] Служебная записка...")
             try:
                 el = WebDriverWait(driver, TIMEOUT).until(
                     EC.element_to_be_clickable((By.XPATH,
                         "//div[contains(text(),'Служебная записка')] | //td[contains(text(),'Служебная записка')]"))
                 )
-                time.sleep(1)
+                time.sleep(5)
                 safe_click(driver, el, "Служебная записка")
+                time.sleep(5)
+                doc_selected = True
                 break
             except Exception:
-                print(f"  Попытка {attempt + 1}/3 не удалась, жду...")
-                # Закрываем ошибку если появилась
+                print("  !! Не найдена 'Служебная записка', пробую заново...")
+                # Закрываем ошибку если есть
                 try:
                     close_btn = driver.find_element(By.XPATH, "//button[contains(text(),'Закрыть')]")
                     if close_btn.is_displayed():
                         safe_click(driver, close_btn, "Закрытие ошибки")
+                        time.sleep(5)
                 except Exception:
                     pass
-                time.sleep(3)
-        if el is None:
-            raise Exception("Служебная записка не найдена после 3 попыток")
-        time.sleep(2)
+                continue
+
+        if not doc_selected:
+            raise Exception("Не удалось выбрать тип документа после 3 попыток")
 
         # SHAG 5
         print("\n[5/7] Создать документ...")
         wait_and_click(driver, By.XPATH,
             "//button[contains(text(),'Создать документ')] | //div[contains(text(),'Создать документ')]",
             "Создать документ")
-        print("  Жду форму (5 сек)...")
-        time.sleep(5)
+        print("  Жду форму (10 сек)...")
+        time.sleep(10)
 
         # SHAG 6
         print("\n[6/7] Заполняю форму...")
