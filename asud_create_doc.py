@@ -194,8 +194,8 @@ def main():
         # SHAG 1
         print("\n[1/7] Открываю АСУД...")
         driver.get(ASUD_URL)
-        print("  Жду загрузку (15 сек)...")
-        time.sleep(15)
+        print("  Жду загрузку (30 сек)...")
+        time.sleep(30)
         print("  ОК Загружено")
 
         # SHAG 2
