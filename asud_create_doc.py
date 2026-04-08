@@ -464,7 +464,81 @@ def main():
             time.sleep(1)
             safe_click(driver, add_btn, "Добавить участника этапа")
             time.sleep(PAUSE)
-            print("  ОК Добавление участника этапа")
+
+            # SHAG 9: Поиск участника — Матус Елена Анатольевна
+            print("\n[9] Поиск участника: Матус...")
+            person = DOC_DATA["подписанты"][0]
+            surname = person.split()[0]
+
+            # Ищем поле поиска по placeholder или data-marker
+            search_input = None
+            try:
+                search_input = driver.find_element(By.CSS_SELECTOR,
+                    "input[data-marker='search-appointment-field']")
+            except Exception:
+                pass
+            if not search_input:
+                try:
+                    search_input = driver.find_element(By.CSS_SELECTOR,
+                        "input[placeholder*='ФИО']")
+                except Exception:
+                    pass
+
+            if search_input:
+                safe_click(driver, search_input, "Поле поиска участника")
+                time.sleep(1)
+                search_input.clear()
+                time.sleep(0.5)
+                for char in surname:
+                    search_input.send_keys(char)
+                    time.sleep(0.1)
+                print(f"  Ввожу: {surname}")
+                time.sleep(PAUSE)
+                search_input.send_keys(Keys.ENTER)
+                time.sleep(PAUSE)
+            else:
+                print("  !! Поле поиска участника не найдено")
+
+            # Выбираем Матус из результатов
+            try:
+                result = WebDriverWait(driver, TIMEOUT).until(
+                    EC.presence_of_element_located((By.XPATH,
+                        f"//*[contains(text(),'{surname}')]"))
+                )
+                # Ищем именно строку в таблице результатов, не поле ввода
+                results = driver.find_elements(By.XPATH,
+                    f"//*[contains(text(),'{surname}')]")
+                for res in results:
+                    try:
+                        if res == search_input:
+                            continue
+                        if res.is_displayed():
+                            safe_click(driver, res, f"Выбор: {person}")
+                            print(f"  ОК Выбран: {person}")
+                            time.sleep(PAUSE)
+                            break
+                    except Exception:
+                        continue
+            except Exception:
+                print(f"  !! Не найден: {person}")
+
+            # Нажимаем "Готово"
+            try:
+                done_btn = driver.find_element(By.ID, "oshs-select-button")
+                if done_btn.is_displayed():
+                    safe_click(driver, done_btn, "Готово")
+                    time.sleep(PAUSE)
+            except Exception:
+                try:
+                    done_btn = driver.find_element(By.XPATH,
+                        "//*[contains(text(),'Готово')]")
+                    if done_btn.is_displayed():
+                        safe_click(driver, done_btn, "Готово")
+                        time.sleep(PAUSE)
+                except Exception:
+                    print("  !! Кнопка 'Готово' не найдена")
+
+            print("  ОК Участник добавлен!")
 
         except Exception as e:
             print(f"  !! Ошибка: {e}")
