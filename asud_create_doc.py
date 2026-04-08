@@ -290,8 +290,7 @@ def main():
             except Exception as e:
                 print(f"  !! Ошибка: {e}")
 
-        print("\n  Проект (паузы 5 сек):")
-        PROJECT_PAUSE = 5
+        print("\n  Проект:")
         try:
             # Кликаем "+" у "Добавление проекта"
             plus_btn = None
@@ -321,13 +320,13 @@ def main():
 
             if plus_btn:
                 safe_click(driver, plus_btn, "+ Добавление проекта")
-                time.sleep(PROJECT_PAUSE)
+                time.sleep(PAUSE)
             else:
                 print("  !! Кнопка + проекта не найдена")
 
             # В диалоге "Множественный выбор": ждём загрузку диалога
             print("  Жду загрузку диалога проектов...")
-            time.sleep(PROJECT_PAUSE)
+            time.sleep(PAUSE)
 
             # Находим поле поиска в диалоге
             search_input = None
@@ -351,10 +350,10 @@ def main():
                     search_input.send_keys(char)
                     time.sleep(0.2)
                 print(f"  Ввожу код проекта: {DOC_DATA['проект']}")
-                time.sleep(PROJECT_PAUSE)
+                time.sleep(PAUSE)
                 # Enter для поиска
                 search_input.send_keys(Keys.ENTER)
-                time.sleep(PROJECT_PAUSE)
+                time.sleep(PAUSE)
             else:
                 print("  !! Поле поиска проекта не найдено")
 
@@ -365,7 +364,7 @@ def main():
                         "//*[contains(text(),'Нет проекта')] | //*[contains(text(),'00-000')]"))
                 )
                 safe_click(driver, result, "Выбор проекта")
-                time.sleep(PROJECT_PAUSE)
+                time.sleep(PAUSE)
             except Exception:
                 print("  !! Проект не найден в списке")
 
@@ -375,7 +374,7 @@ def main():
                     "//button[contains(text(),'Готово')]")
                 if done_btn.is_displayed():
                     safe_click(driver, done_btn, "Готово")
-                    time.sleep(PROJECT_PAUSE)
+                    time.sleep(PAUSE)
             except Exception:
                 print("  !! Кнопка 'Готово' не найдена")
 
