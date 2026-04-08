@@ -33,6 +33,7 @@ DOC_DATA = {
 }
 
 TIMEOUT = 20
+PAUSE = 5  # пауза между действиями (сек)
 
 
 def get_driver_path():
@@ -96,10 +97,11 @@ def safe_click(driver, element, description=""):
 def wait_and_click(driver, by, selector, description="", timeout=TIMEOUT):
     print(f"  -> Ожидаю: {description or selector}")
     el = WebDriverWait(driver, timeout).until(
-        EC.presence_of_element_located((by, selector))
+        EC.element_to_be_clickable((by, selector))
     )
-    time.sleep(0.5)
+    time.sleep(PAUSE)
     safe_click(driver, el, description or selector)
+    time.sleep(PAUSE)
     return el
 
 
@@ -200,116 +202,47 @@ def main():
 
         # SHAG 2
         print("\n[2/7] Кнопка создания документа...")
-        el = None
-        for attempt in range(3):
-            try:
-                el = WebDriverWait(driver, TIMEOUT).until(
-                    EC.element_to_be_clickable((By.ID, "mainscreen-create-button"))
-                )
-                break
-            except Exception:
-                print(f"  Попытка {attempt + 1}/3 не удалась, жду ещё...")
-                time.sleep(5)
-        if el is None:
-            raise Exception("Кнопка создания документа не найдена после 3 попыток")
-        time.sleep(5)
+        el = WebDriverWait(driver, TIMEOUT).until(
+            EC.element_to_be_clickable((By.ID, "mainscreen-create-button"))
+        )
+        time.sleep(PAUSE)
         safe_click(driver, el, "Кнопка создания")
-        time.sleep(5)
+        print("  Жду открытие диалога...")
+        time.sleep(PAUSE)
 
-        # SHAG 3 + 4: выбор типа и подтипа с перезапуском при ошибке
-        doc_selected = False
-        for full_attempt in range(3):
-            # Закрываем ошибку GWT если есть
-            try:
-                close_btn = driver.find_element(By.XPATH, "//button[contains(text(),'Закрыть')]")
-                if close_btn.is_displayed():
-                    safe_click(driver, close_btn, "Закрытие ошибки")
-                    time.sleep(5)
-            except Exception:
-                pass
+        # SHAG 3
+        print("\n[3/7] Исходящий документ...")
+        wait_and_click(driver, By.XPATH,
+            "//div[contains(text(),'Исходящий документ')]",
+            "Исходящий документ")
+        print("  Жду загрузку подтипов...")
+        time.sleep(PAUSE)
 
-            # Шаг 3: Исходящий документ
-            print(f"\n[3/7] Исходящий документ... (попытка {full_attempt + 1}/3)")
-            try:
-                el = WebDriverWait(driver, TIMEOUT).until(
-                    EC.element_to_be_clickable((By.XPATH, "//div[contains(text(),'Исходящий документ')]"))
-                )
-                time.sleep(5)
-                safe_click(driver, el, "Исходящий документ")
-                print("  Жду загрузку подтипов (10 сек)...")
-                time.sleep(10)
-            except Exception:
-                print("  !! Не найден 'Исходящий документ', пробую заново...")
-                # Заново открываем диалог
-                try:
-                    create_btn = WebDriverWait(driver, TIMEOUT).until(
-                        EC.element_to_be_clickable((By.ID, "mainscreen-create-button"))
-                    )
-                    time.sleep(5)
-                    safe_click(driver, create_btn, "Кнопка создания (повтор)")
-                    time.sleep(5)
-                except Exception:
-                    pass
-                continue
-
-            # Закрываем ошибку GWT если появилась после клика
-            try:
-                close_btn = driver.find_element(By.XPATH, "//button[contains(text(),'Закрыть')]")
-                if close_btn.is_displayed():
-                    print("  !! Ошибка GWT, закрываю и пробую заново...")
-                    safe_click(driver, close_btn, "Закрытие ошибки")
-                    time.sleep(5)
-                    continue
-            except Exception:
-                pass
-
-            # Шаг 4: Служебная записка
-            print("\n[4/7] Служебная записка...")
-            try:
-                el = WebDriverWait(driver, TIMEOUT).until(
-                    EC.element_to_be_clickable((By.XPATH,
-                        "//div[contains(text(),'Служебная записка')] | //td[contains(text(),'Служебная записка')]"))
-                )
-                time.sleep(5)
-                safe_click(driver, el, "Служебная записка")
-                time.sleep(5)
-                doc_selected = True
-                break
-            except Exception:
-                print("  !! Не найдена 'Служебная записка', пробую заново...")
-                # Закрываем ошибку если есть
-                try:
-                    close_btn = driver.find_element(By.XPATH, "//button[contains(text(),'Закрыть')]")
-                    if close_btn.is_displayed():
-                        safe_click(driver, close_btn, "Закрытие ошибки")
-                        time.sleep(5)
-                except Exception:
-                    pass
-                continue
-
-        if not doc_selected:
-            raise Exception("Не удалось выбрать тип документа после 3 попыток")
+        # SHAG 4
+        print("\n[4/7] Служебная записка...")
+        wait_and_click(driver, By.XPATH,
+            "//div[contains(text(),'Служебная записка')] | //td[contains(text(),'Служебная записка')]",
+            "Служебная записка")
+        time.sleep(PAUSE)
 
         # SHAG 5
         print("\n[5/7] Создать документ...")
         wait_and_click(driver, By.XPATH,
             "//button[contains(text(),'Создать документ')] | //div[contains(text(),'Создать документ')]",
             "Создать документ")
-        print("  Жду форму (10 сек)...")
-        time.sleep(10)
+        print("  Жду форму...")
+        time.sleep(PAUSE)
 
         # SHAG 6
         print("\n[6/7] Заполняю форму...")
 
-        # Kratkoe soderzhanie
         print("\n  Краткое содержание:")
         try:
             textareas = driver.find_elements(By.TAG_NAME, "textarea")
             visible_ta = [ta for ta in textareas if ta.is_displayed()]
             if visible_ta:
-                driver.execute_script("arguments[0].value = arguments[1];", 
+                driver.execute_script("arguments[0].value = arguments[1];",
                     visible_ta[0], DOC_DATA["краткое_содержание"])
-                # Тригерим событие change для GWT
                 driver.execute_script("""
                     var evt = new Event('input', {bubbles: true});
                     arguments[0].dispatchEvent(evt);
@@ -321,9 +254,8 @@ def main():
                 print("  !! Textarea не найдена")
         except Exception as e:
             print(f"  !! Ошибка: {e}")
-        time.sleep(0.5)
+        time.sleep(PAUSE)
 
-        # Adresaty
         print("\n  Адресаты:")
         for person in DOC_DATA["адресаты"]:
             try:
@@ -331,14 +263,14 @@ def main():
                 visible_plus = [b for b in plus_buttons if b.is_displayed()]
                 if visible_plus:
                     safe_click(driver, visible_plus[0], f"+ {person}")
-                    time.sleep(2)
+                    time.sleep(PAUSE)
                     add_person_from_directory(driver, person, "Адресат")
+                    time.sleep(PAUSE)
                 else:
                     print("  !! Кнопка + не найдена")
             except Exception as e:
                 print(f"  !! Ошибка: {e}")
 
-        # Podpisanty
         print("\n  Подписанты:")
         for person in DOC_DATA["подписанты"]:
             try:
@@ -348,25 +280,25 @@ def main():
                     safe_click(driver, visible_plus[1], f"+ {person}")
                 elif visible_plus:
                     safe_click(driver, visible_plus[-1], f"+ {person}")
-                time.sleep(2)
+                time.sleep(PAUSE)
                 add_person_from_directory(driver, person, "Подписант")
+                time.sleep(PAUSE)
             except Exception as e:
                 print(f"  !! Ошибка: {e}")
 
-        # Proekt
         print("\n  Проект:")
         try:
             inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='text']")
             visible_inputs = [i for i in inputs if i.is_displayed()]
             for inp in reversed(visible_inputs):
                 try:
-                    driver.execute_script("arguments[0].value = arguments[1];", 
+                    driver.execute_script("arguments[0].value = arguments[1];",
                         inp, DOC_DATA["проект"])
                     driver.execute_script("""
                         var evt = new Event('input', {bubbles: true});
                         arguments[0].dispatchEvent(evt);
                     """, inp)
-                    time.sleep(2)
+                    time.sleep(PAUSE)
                     try:
                         no_proj = driver.find_element(By.XPATH,
                             "//*[contains(translate(text(),'НЕТПРОКА','нетпрока'),'нет проекта')]")
