@@ -292,27 +292,83 @@ def main():
 
         print("\n  Проект:")
         try:
-            inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='text']")
-            visible_inputs = [i for i in inputs if i.is_displayed()]
-            for inp in reversed(visible_inputs):
-                try:
-                    driver.execute_script("arguments[0].value = arguments[1];",
-                        inp, DOC_DATA["проект"])
-                    driver.execute_script("""
-                        var evt = new Event('input', {bubbles: true});
-                        arguments[0].dispatchEvent(evt);
-                    """, inp)
-                    time.sleep(PAUSE)
-                    try:
-                        no_proj = driver.find_element(By.XPATH,
-                            "//*[contains(translate(text(),'НЕТПРОКА','нетпрока'),'нет проекта')]")
-                        if no_proj.is_displayed():
-                            safe_click(driver, no_proj, "Нет проекта")
-                    except Exception:
-                        pass
+            # Кликаем "+" у "Добавление проекта"
+            plus_btn = None
+            # Ищем img с data-marker="select-btn" рядом с "Добавление проекта"
+            try:
+                section = driver.find_element(By.XPATH,
+                    "//*[contains(text(),'Добавление проекта')]")
+                parent = section
+                for _ in range(5):
+                    parent = parent.find_element(By.XPATH, "..")
+                    btns = parent.find_elements(By.CSS_SELECTOR,
+                        "img[data-marker='select-btn'], img.gwt-Image")
+                    visible = [b for b in btns if b.is_displayed()]
+                    if visible:
+                        plus_btn = visible[-1]
+                        break
+            except Exception:
+                pass
+
+            # Запасной вариант: ищем все img.gwt-Image с select-btn
+            if not plus_btn:
+                btns = driver.find_elements(By.CSS_SELECTOR,
+                    "img[data-marker='select-btn']")
+                visible = [b for b in btns if b.is_displayed()]
+                if visible:
+                    plus_btn = visible[-1]
+
+            if plus_btn:
+                safe_click(driver, plus_btn, "+ Добавление проекта")
+                time.sleep(PAUSE)
+            else:
+                print("  !! Кнопка + проекта не найдена")
+
+            # В диалоге "Множественный выбор": вводим код проекта в поле поиска
+            search_input = WebDriverWait(driver, TIMEOUT).until(
+                EC.presence_of_element_located((By.XPATH,
+                    "//input[contains(@placeholder,'код') or contains(@placeholder,'наименование')] | //input[@type='text']"))
+            )
+            # Находим поле поиска в диалоге (первое видимое текстовое поле)
+            dialog_inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='text']")
+            search_input = None
+            for inp in dialog_inputs:
+                if inp.is_displayed():
+                    search_input = inp
                     break
-                except Exception:
-                    continue
+
+            if search_input:
+                search_input.clear()
+                search_input.send_keys(DOC_DATA["проект"])
+                print(f"  Ввожу код проекта: {DOC_DATA['проект']}")
+                time.sleep(PAUSE)
+                # Enter для поиска
+                search_input.send_keys(Keys.ENTER)
+                time.sleep(PAUSE)
+            else:
+                print("  !! Поле поиска проекта не найдено")
+
+            # Выбираем первый результат (00-000-000 Нет проекта)
+            try:
+                result = WebDriverWait(driver, TIMEOUT).until(
+                    EC.presence_of_element_located((By.XPATH,
+                        "//*[contains(text(),'Нет проекта')] | //*[contains(text(),'00-000')]"))
+                )
+                safe_click(driver, result, "Выбор проекта")
+                time.sleep(PAUSE)
+            except Exception:
+                print("  !! Проект не найден в списке")
+
+            # Нажимаем "Готово"
+            try:
+                done_btn = driver.find_element(By.XPATH,
+                    "//button[contains(text(),'Готово')]")
+                if done_btn.is_displayed():
+                    safe_click(driver, done_btn, "Готово")
+                    time.sleep(PAUSE)
+            except Exception:
+                print("  !! Кнопка 'Готово' не найдена")
+
         except Exception as e:
             print(f"  !! Ошибка: {e}")
 
