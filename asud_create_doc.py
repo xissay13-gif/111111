@@ -112,72 +112,77 @@ def wait_and_click(driver, by, selector, description="", timeout=TIMEOUT):
     return el
 
 
-def add_person_from_directory(driver, person_name, field_name):
-    print(f"\n  Добавляю {field_name}: {person_name}")
-    time.sleep(2)
+def find_section_input(driver, section_label):
+    """Находит input-поле combobox рядом с указанной секцией."""
+    # Находим лейбл секции
+    try:
+        section = driver.find_element(By.XPATH,
+            f"//*[contains(text(),'{section_label}')]")
+    except Exception:
+        print(f"  !! Секция '{section_label}' не найдена")
+        return None
 
-    search_field = None
-    for sel in [".gwt-TextBox", "input[type='text']"]:
+    # Ищем input внутри родительских контейнеров
+    for level in range(1, 8):
         try:
-            fields = driver.find_elements(By.CSS_SELECTOR, sel)
-            visible = [f for f in fields if f.is_displayed()]
+            parent = section
+            for _ in range(level):
+                parent = parent.find_element(By.XPATH, "..")
+            inputs = parent.find_elements(By.CSS_SELECTOR,
+                "input[type='text']")
+            visible = [i for i in inputs if i.is_displayed() and i.get_attribute("readonly") is None]
             if visible:
-                search_field = visible[-1]
-                break
+                return visible[0]
         except Exception:
             continue
+    return None
 
-    if not search_field:
-        print(f"  !! Не найдено поле поиска!")
+
+def add_person_to_combobox(driver, section_label, person_name):
+    """Добавляет человека через combobox в указанной секции."""
+    print(f"\n  Добавляю в '{section_label}': {person_name}")
+    surname = person_name.split()[0]
+
+    input_field = find_section_input(driver, section_label)
+    if not input_field:
+        print(f"  !! Поле ввода не найдено для '{section_label}'")
         return
 
-    surname = person_name.split()[0]
-    search_field.clear()
-    search_field.send_keys(surname)
-    print(f"  ОК Фамилия: {surname}")
-    time.sleep(0.5)
+    # Кликаем на поле и вводим фамилию
+    safe_click(driver, input_field, f"Поле '{section_label}'")
+    time.sleep(1)
+    input_field.clear()
+    input_field.send_keys(surname)
+    print(f"  Ввожу фамилию: {surname}")
+    time.sleep(PAUSE)
 
-    clicked = False
-    for sel in ["//button[contains(text(),'Найти')]", "//button[contains(text(),'Поиск')]"]:
-        try:
-            btns = driver.find_elements(By.XPATH, sel)
-            visible = [b for b in btns if b.is_displayed()]
-            if visible:
-                safe_click(driver, visible[0], "Поиск")
-                clicked = True
-                break
-        except Exception:
-            continue
-    if not clicked:
-        search_field.send_keys(Keys.ENTER)
-
-    print("  Жду результаты...")
-    time.sleep(3)
-
+    # Ждём выпадающий список и выбираем
     try:
-        result = driver.find_element(By.XPATH, f"//*[contains(text(),'{surname}')]")
-        if result.is_displayed():
+        options = driver.find_elements(By.XPATH,
+            f"//*[contains(text(),'{surname}')]")
+        for opt in options:
             try:
-                ActionChains(driver).double_click(result).perform()
+                if opt == input_field:
+                    continue
+                if not opt.is_displayed():
+                    continue
+                # Пропускаем сам лейбл секции
+                tag = opt.tag_name.lower()
+                if tag in ('label', 'span', 'td') and opt.text.strip() == section_label:
+                    continue
+                safe_click(driver, opt, f"Выбор: {person_name}")
+                print(f"  ОК Выбран: {person_name}")
+                time.sleep(PAUSE)
+                return
             except Exception:
-                safe_click(driver, result, surname)
-            print(f"  ОК Выбран: {person_name}")
+                continue
     except Exception:
-        print(f"  !! Не найден: {person_name}")
+        pass
 
-    time.sleep(1)
-
-    for sel in ["//button[contains(text(),'Выбрать')]", "//button[contains(text(),'OK')]",
-                "//button[contains(text(),'Добавить')]"]:
-        try:
-            btns = driver.find_elements(By.XPATH, sel)
-            visible = [b for b in btns if b.is_displayed()]
-            if visible:
-                safe_click(driver, visible[0], "Подтверждение")
-                break
-        except Exception:
-            continue
-    time.sleep(1)
+    # Если выпадающий список не появился — Enter
+    print(f"  Выпадающий список не найден, пробую Enter...")
+    input_field.send_keys(Keys.ENTER)
+    time.sleep(PAUSE)
 
 
 def main():
@@ -274,30 +279,14 @@ def main():
         print("\n  Адресаты:")
         for person in DOC_DATA["адресаты"]:
             try:
-                plus_buttons = driver.find_elements(By.CSS_SELECTOR, "img[src*='add']")
-                visible_plus = [b for b in plus_buttons if b.is_displayed()]
-                if visible_plus:
-                    safe_click(driver, visible_plus[0], f"+ {person}")
-                    time.sleep(PAUSE)
-                    add_person_from_directory(driver, person, "Адресат")
-                    time.sleep(PAUSE)
-                else:
-                    print("  !! Кнопка + не найдена")
+                add_person_to_combobox(driver, "Адресаты", person)
             except Exception as e:
                 print(f"  !! Ошибка: {e}")
 
         print("\n  Подписанты:")
         for person in DOC_DATA["подписанты"]:
             try:
-                plus_buttons = driver.find_elements(By.CSS_SELECTOR, "img[src*='add']")
-                visible_plus = [b for b in plus_buttons if b.is_displayed()]
-                if len(visible_plus) >= 2:
-                    safe_click(driver, visible_plus[1], f"+ {person}")
-                elif visible_plus:
-                    safe_click(driver, visible_plus[-1], f"+ {person}")
-                time.sleep(PAUSE)
-                add_person_from_directory(driver, person, "Подписант")
-                time.sleep(PAUSE)
+                add_person_to_combobox(driver, "Подписанты", person)
             except Exception as e:
                 print(f"  !! Ошибка: {e}")
 
