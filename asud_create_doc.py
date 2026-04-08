@@ -194,15 +194,24 @@ def main():
         # SHAG 1
         print("\n[1/7] Открываю АСУД...")
         driver.get(ASUD_URL)
-        print("  Жду загрузку (10 сек)...")
-        time.sleep(10)
+        print("  Жду загрузку (15 сек)...")
+        time.sleep(15)
         print("  ОК Загружено")
 
         # SHAG 2
         print("\n[2/7] Кнопка создания документа...")
-        el = WebDriverWait(driver, TIMEOUT).until(
-            EC.presence_of_element_located((By.ID, "mainscreen-create-button"))
-        )
+        el = None
+        for attempt in range(3):
+            try:
+                el = WebDriverWait(driver, TIMEOUT).until(
+                    EC.element_to_be_clickable((By.ID, "mainscreen-create-button"))
+                )
+                break
+            except Exception:
+                print(f"  Попытка {attempt + 1}/3 не удалась, жду ещё...")
+                time.sleep(5)
+        if el is None:
+            raise Exception("Кнопка создания документа не найдена после 3 попыток")
         time.sleep(2)
         safe_click(driver, el, "Кнопка создания")
         time.sleep(3)
