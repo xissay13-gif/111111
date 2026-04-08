@@ -407,6 +407,68 @@ def main():
         except Exception as e:
             print(f"  !! Ошибка сохранения: {e}")
 
+        # SHAG 8
+        print("\n[8] Жизненный цикл → Проверка оформления...")
+
+        # Кликаем вкладку "Жизненный цикл"
+        try:
+            lc_tab = WebDriverWait(driver, TIMEOUT).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR,
+                    "[data-marker='tab-lifecycle']"))
+            )
+            time.sleep(PAUSE)
+            safe_click(driver, lc_tab, "Жизненный цикл")
+            time.sleep(PAUSE)
+        except Exception:
+            # Запасной: по тексту
+            try:
+                lc_tab = driver.find_element(By.XPATH,
+                    "//*[contains(text(),'Жизненный цикл')]")
+                safe_click(driver, lc_tab, "Жизненный цикл")
+                time.sleep(PAUSE)
+            except Exception as e:
+                print(f"  !! Вкладка 'Жизненный цикл' не найдена: {e}")
+
+        # Ищем иконку контекстного меню рядом с "Проверка оформления"
+        try:
+            # Находим секцию "Проверка оформления"
+            section = WebDriverWait(driver, TIMEOUT).until(
+                EC.presence_of_element_located((By.XPATH,
+                    "//*[contains(text(),'Проверка оформления')]"))
+            )
+            time.sleep(PAUSE)
+
+            # Ищем иконку меню (⚙) рядом с секцией
+            menu_icon = None
+            parent = section
+            for _ in range(5):
+                parent = parent.find_element(By.XPATH, "..")
+                icons = parent.find_elements(By.CSS_SELECTOR,
+                    "img[data-name='MSFO_CNTX_MENU_IMG'], img[title='Контекстное меню']")
+                visible = [i for i in icons if i.is_displayed()]
+                if visible:
+                    menu_icon = visible[0]
+                    break
+
+            if menu_icon:
+                safe_click(driver, menu_icon, "Контекстное меню (Проверка оформления)")
+                time.sleep(PAUSE)
+            else:
+                print("  !! Иконка меню не найдена")
+
+            # Кликаем "Добавить участника этапа"
+            add_btn = WebDriverWait(driver, TIMEOUT).until(
+                EC.presence_of_element_located((By.XPATH,
+                    "//*[contains(text(),'Добавить участника этапа')]"))
+            )
+            time.sleep(1)
+            safe_click(driver, add_btn, "Добавить участника этапа")
+            time.sleep(PAUSE)
+            print("  ОК Добавление участника этапа")
+
+        except Exception as e:
+            print(f"  !! Ошибка: {e}")
+
         input("\n  Enter для закрытия браузера...")
 
     except Exception as e:
