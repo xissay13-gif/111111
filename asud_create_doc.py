@@ -330,23 +330,18 @@ def main():
 
             # Находим поле поиска по placeholder
             search_input = None
-            # Способ 1: по placeholder
             try:
-                search_input = driver.find_element(By.XPATH,
-                    "//input[contains(@placeholder,'код') or contains(@placeholder,'наименование')]")
+                search_input = driver.find_element(By.CSS_SELECTOR,
+                    "input[placeholder*='код или наименование проекта']")
             except Exception:
-                pass
-
-            # Способ 2: первый видимый input в диалоге с placeholder
-            if not search_input:
+                # Запасной: любой input с placeholder про проект
                 dialog_inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='text']")
                 for inp in dialog_inputs:
                     try:
-                        if inp.is_displayed() and inp.is_enabled():
-                            ph = inp.get_attribute("placeholder") or ""
-                            if "код" in ph or "наименование" in ph or "проект" in ph:
-                                search_input = inp
-                                break
+                        ph = inp.get_attribute("placeholder") or ""
+                        if "проект" in ph.lower() and inp.is_displayed():
+                            search_input = inp
+                            break
                     except Exception:
                         continue
 
