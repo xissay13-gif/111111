@@ -368,15 +368,22 @@ def main():
             except Exception:
                 print("  !! Проект не найден в списке")
 
-            # Нажимаем "Готово"
+            # Нажимаем "Готово" (div с id="oshs-select-button")
             try:
-                done_btn = driver.find_element(By.XPATH,
-                    "//button[contains(text(),'Готово')]")
+                done_btn = driver.find_element(By.ID, "oshs-select-button")
                 if done_btn.is_displayed():
                     safe_click(driver, done_btn, "Готово")
                     time.sleep(PAUSE)
             except Exception:
-                print("  !! Кнопка 'Готово' не найдена")
+                # Запасной вариант — ищем по тексту в любом теге
+                try:
+                    done_btn = driver.find_element(By.XPATH,
+                        "//*[contains(text(),'Готово')]")
+                    if done_btn.is_displayed():
+                        safe_click(driver, done_btn, "Готово")
+                        time.sleep(PAUSE)
+                except Exception:
+                    print("  !! Кнопка 'Готово' не найдена")
 
         except Exception as e:
             print(f"  !! Ошибка: {e}")
