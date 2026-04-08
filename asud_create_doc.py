@@ -324,22 +324,31 @@ def main():
             else:
                 print("  !! Кнопка + проекта не найдена")
 
-            # В диалоге "Множественный выбор": вводим код проекта в поле поиска
-            search_input = WebDriverWait(driver, TIMEOUT).until(
-                EC.presence_of_element_located((By.XPATH,
-                    "//input[contains(@placeholder,'код') or contains(@placeholder,'наименование')] | //input[@type='text']"))
-            )
-            # Находим поле поиска в диалоге (первое видимое текстовое поле)
-            dialog_inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='text']")
+            # В диалоге "Множественный выбор": ждём загрузку диалога
+            print("  Жду загрузку диалога проектов...")
+            time.sleep(PAUSE)
+
+            # Находим поле поиска в диалоге
             search_input = None
+            dialog_inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='text']")
             for inp in dialog_inputs:
-                if inp.is_displayed():
-                    search_input = inp
-                    break
+                try:
+                    if inp.is_displayed() and inp.is_enabled():
+                        search_input = inp
+                        break
+                except Exception:
+                    continue
 
             if search_input:
+                # Кликаем на поле чтобы оно стало активным
+                safe_click(driver, search_input, "Поле поиска проекта")
+                time.sleep(1)
                 search_input.clear()
-                search_input.send_keys(DOC_DATA["проект"])
+                time.sleep(0.5)
+                # Вводим по символу для надёжности
+                for char in DOC_DATA["проект"]:
+                    search_input.send_keys(char)
+                    time.sleep(0.2)
                 print(f"  Ввожу код проекта: {DOC_DATA['проект']}")
                 time.sleep(PAUSE)
                 # Enter для поиска
