@@ -33,12 +33,15 @@ jobs:
         --hidden-import=selenium.webdriver.common.action_chains
         --hidden-import=selenium.webdriver.support.ui
         --hidden-import=selenium.webdriver.support.expected_conditions
-        --exclude-module=tkinter
-        --exclude-module=unittest
-        --exclude-module=email
-        --exclude-module=xml
-        --exclude-module=pydoc
-        --strip
+        --hidden-import=email
+        --hidden-import=email.mime
+        --hidden-import=email.mime.text
+        --hidden-import=email.mime.multipart
+        --hidden-import=urllib
+        --hidden-import=urllib.request
+        --hidden-import=http
+        --hidden-import=http.client
+        --collect-all=selenium
         asud_create_doc.py
 
     - name: Upload EXE
