@@ -212,17 +212,25 @@ def main():
 
         # SHAG 3
         print("\n[3/7] Исходящий документ...")
-        wait_and_click(driver, By.XPATH,
-            "//div[contains(text(),'Исходящий документ')]",
-            "Исходящий документ")
+        # У элемента есть id="Исходящий документ" (из DevTools)
+        el = WebDriverWait(driver, TIMEOUT).until(
+            EC.presence_of_element_located((By.XPATH,
+                "//*[@id='Исходящий документ'] | //div[contains(text(),'Исходящий документ')]"))
+        )
+        time.sleep(PAUSE)
+        safe_click(driver, el, "Исходящий документ")
         print("  Жду загрузку подтипов...")
         time.sleep(PAUSE)
 
         # SHAG 4
         print("\n[4/7] Служебная записка...")
-        wait_and_click(driver, By.XPATH,
-            "//div[contains(text(),'Служебная записка')] | //td[contains(text(),'Служебная записка')]",
-            "Служебная записка")
+        # Ищем в правой таблице Вид — может быть div, td или span
+        el = WebDriverWait(driver, TIMEOUT).until(
+            EC.presence_of_element_located((By.XPATH,
+                "//*[contains(text(),'Служебная записка')]"))
+        )
+        time.sleep(PAUSE)
+        safe_click(driver, el, "Служебная записка")
         time.sleep(PAUSE)
 
         # SHAG 5
