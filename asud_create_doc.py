@@ -382,8 +382,17 @@ def main():
             print(f"  !! Ошибка: {e}")
 
         # SHAG 7
-        print("\n[7/7] Готово!")
-        print("  Документ НЕ сохранён - проверь данные.")
+        print("\n[7/7] Сохраняю документ...")
+        try:
+            save_btn = WebDriverWait(driver, TIMEOUT).until(
+                EC.element_to_be_clickable((By.ID, "header-save-btn"))
+            )
+            time.sleep(PAUSE)
+            safe_click(driver, save_btn, "Сохранить")
+            time.sleep(PAUSE)
+            print("  ОК Документ сохранён!")
+        except Exception as e:
+            print(f"  !! Ошибка сохранения: {e}")
 
         input("\n  Enter для закрытия браузера...")
 
