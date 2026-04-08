@@ -52,8 +52,42 @@ def get_driver_path():
 def safe_click(driver, element, description=""):
     """Несколько способов клика — от надёжного к запасному."""
     print(f"  -> Клик: {description}")
-    
-    # Способ 1: JavaScript dispatchEvent (обход бага EdgeDriver)
+
+    # Прокручиваем к элементу
+    try:
+        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", element)
+        time.sleep(0.5)
+    except Exception:
+        pass
+
+    # Способ 1: ActionChains (лучше всего для GWT/GXT)
+    try:
+        ActionChains(driver).move_to_element(element).pause(0.5).click().perform()
+        print(f"  ОК (ActionChains): {description}")
+        time.sleep(0.5)
+        return
+    except Exception:
+        pass
+
+    # Способ 2: Обычный клик
+    try:
+        element.click()
+        print(f"  ОК (click): {description}")
+        time.sleep(0.5)
+        return
+    except Exception:
+        pass
+
+    # Способ 3: JavaScript .click()
+    try:
+        driver.execute_script("arguments[0].click();", element)
+        print(f"  ОК (JS click): {description}")
+        time.sleep(0.5)
+        return
+    except Exception:
+        pass
+
+    # Способ 4: JavaScript dispatchEvent (запасной)
     try:
         driver.execute_script("""
             var evt = new MouseEvent('click', {
@@ -62,33 +96,6 @@ def safe_click(driver, element, description=""):
             arguments[0].dispatchEvent(evt);
         """, element)
         print(f"  ОК (JS dispatchEvent): {description}")
-        time.sleep(0.5)
-        return
-    except Exception:
-        pass
-    
-    # Способ 2: JavaScript .click()
-    try:
-        driver.execute_script("arguments[0].click();", element)
-        print(f"  ОК (JS click): {description}")
-        time.sleep(0.5)
-        return
-    except Exception:
-        pass
-    
-    # Способ 3: ActionChains
-    try:
-        ActionChains(driver).move_to_element(element).pause(0.3).click().perform()
-        print(f"  ОК (ActionChains): {description}")
-        time.sleep(0.5)
-        return
-    except Exception:
-        pass
-    
-    # Способ 4: Обычный клик
-    try:
-        element.click()
-        print(f"  ОК (click): {description}")
         time.sleep(0.5)
     except Exception as e:
         print(f"  !! Все способы клика не сработали: {e}")
