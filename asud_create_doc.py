@@ -479,45 +479,57 @@ def fill_delivery_method(driver):
     time.sleep(1.5)  # ждём появления dropdown
 
     # 3. Ищем "Электронная почта" в появившемся меню
-    #    Варианты: div в dropdown, li, td, span
+    #    GXT BoundList рендерит опции в отдельном layer (z-index),
+    #    поэтому ищем глобально по всему документу.
     target_text = "Электронная почта"
     option = None
 
-    # Сначала пробуем точное совпадение текста
-    candidates = driver.find_elements(By.XPATH,
-        f"//*[normalize-space(text())='{target_text}']")
-    for c in candidates:
-        try:
-            if c.is_displayed():
-                option = c
-                break
-        except Exception:
-            continue
-
-    # Если точного нет — частичное
-    if not option:
+    # Ждём появления опций в dropdown
+    for attempt in range(3):
+        # Ищем через find_elements (не WebDriverWait — dropdown может быть уже виден)
         candidates = driver.find_elements(By.XPATH,
             f"//*[contains(text(),'{target_text}')]")
+        print(f"  Попытка {attempt + 1}: найдено {len(candidates)} элементов '{target_text}'")
+
         for c in candidates:
             try:
-                if c.is_displayed() and c.tag_name.lower() != 'input':
-                    option = c
-                    break
+                if not c.is_displayed():
+                    continue
+                if c.tag_name.lower() == 'input':
+                    continue
+                # Пропускаем очевидно не-опции (слишком большие контейнеры)
+                option = c
+                break
             except Exception:
                 continue
 
+        if option:
+            break
+        time.sleep(1)
+
     if option:
-        # Прокручиваем к опции (выпадающий список может быть длинным)
         try:
             driver.execute_script(
                 "arguments[0].scrollIntoView({block: 'center'});", option)
             time.sleep(0.3)
-        except Exception:
-            pass
-        js_click(driver, option, target_text)
-        time.sleep(0.5)
-        print("  ОК Способ получения выбран: Электронная почта")
-        return
+            # Клик через ActionChains — тот же способ что работает для dropdown адресатов
+            ActionChains(driver).move_to_element(option).pause(0.3).click().perform()
+            time.sleep(0.5)
+            print("  ОК Способ получения выбран: Электронная почта")
+            return
+        except Exception as e:
+            print(f"  ! ActionChains не сработал: {e}, пробую обычный клик...")
+            try:
+                option.click()
+                time.sleep(0.5)
+                print("  ОК Способ получения выбран (click)")
+                return
+            except Exception:
+                # JS click как последний вариант
+                driver.execute_script("arguments[0].click();", option)
+                time.sleep(0.5)
+                print("  ОК Способ получения выбран (JS)")
+                return
 
     # Фоллбэк: <select>
     try:
@@ -554,46 +566,64 @@ def get_attachment_path():
 
 
 def attach_content(driver, file_path):
-    """Нажимает 'Присоединить содержимое' и загружает файл."""
+    """Нажимает 'Присоединить содержимое' и загружает файл.
+    Избегаем открытия нативного Windows Explorer — шлём путь прямо
+    в скрытый input[type=file] до любых кликов по кнопкам загрузки."""
     print(f"  Присоединение файла: {os.path.basename(file_path)}")
 
-    # Кликаем кнопку "Присоединить содержимое"
+    # Кликаем кнопку "Присоединить содержимое" — открывается модалка
     try:
         btn = WebDriverWait(driver, TIMEOUT).until(
             EC.presence_of_element_located((By.XPATH,
                 "//div[contains(text(),'Присоединить содержимое')]"))
         )
-        js_click(driver, btn, "Prisoedinit soderzhimoe")
+        js_click(driver, btn, "Присоединить содержимое")
         time.sleep(2)
     except Exception as e:
         print(f"  !! Кнопка 'Присоединить содержимое' не найдена: {e}")
         return
 
-    # Ищем скрытый input[type='file'] и отправляем путь к файлу
+    # Ищем input[type='file'] — делаем его видимым через JS (чтобы send_keys работал
+    # гарантированно), но НЕ кликаем. send_keys в input[type=file] НЕ открывает
+    # нативный диалог, это просто присваивание пути.
+    file_input = None
     try:
-        file_input = driver.find_element(By.CSS_SELECTOR, "input[type='file']")
+        inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='file']")
+        print(f"  Найдено input[type=file]: {len(inputs)}")
+        if inputs:
+            file_input = inputs[0]
+            # Снимаем display:none/visibility:hidden чтобы selenium мог работать
+            driver.execute_script("""
+                var el = arguments[0];
+                el.style.display = 'block';
+                el.style.visibility = 'visible';
+                el.style.opacity = '1';
+                el.style.width = '1px';
+                el.style.height = '1px';
+                el.removeAttribute('hidden');
+            """, file_input)
+            time.sleep(0.3)
+    except Exception as e:
+        print(f"  !! Ошибка поиска input[type=file]: {e}")
+        return
+
+    if not file_input:
+        print("  !! input[type='file'] не найден на странице!")
+        return
+
+    # Отправляем путь к файлу — это НЕ открывает нативный диалог
+    try:
         file_input.send_keys(file_path)
+        time.sleep(1)
+        # Триггерим change — некоторые фреймворки ждут этого события
+        driver.execute_script("""
+            arguments[0].dispatchEvent(new Event('change', {bubbles: true}));
+        """, file_input)
+        time.sleep(1)
         print(f"  ОК Файл выбран: {os.path.basename(file_path)}")
-        time.sleep(2)
-    except Exception:
-        # Фоллбэк: ищем все input[type='file'], включая скрытые
-        try:
-            file_inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='file']")
-            if file_inputs:
-                # Делаем input видимым через JS и отправляем файл
-                driver.execute_script(
-                    "arguments[0].style.display='block'; arguments[0].style.visibility='visible';",
-                    file_inputs[0])
-                time.sleep(0.5)
-                file_inputs[0].send_keys(file_path)
-                print(f"  ОК Файл выбран (fallback): {os.path.basename(file_path)}")
-                time.sleep(2)
-            else:
-                print("  !! input[type='file'] не найден на странице!")
-                return
-        except Exception as e:
-            print(f"  !! Ошибка загрузки файла: {e}")
-            return
+    except Exception as e:
+        print(f"  !! Ошибка отправки пути к файлу: {e}")
+        return
 
     # Нажимаем кнопку подтверждения в диалоге
     try:
@@ -601,7 +631,7 @@ def attach_content(driver, file_path):
             EC.presence_of_element_located((By.CSS_SELECTOR,
                 "#SetContentDialogBtnSend, [id*='SetContentDialogBtnSend']"))
         )
-        js_click(driver, confirm_btn, "Podtverdit prisoedinenie")
+        js_click(driver, confirm_btn, "Подтвердить присоединение")
         time.sleep(3)
         print("  ОК Файл присоединён!")
     except Exception:
@@ -611,7 +641,7 @@ def attach_content(driver, file_path):
                 "//div[contains(text(),'Присоединить содержимое')] | //button[contains(text(),'Присоединить')]")
             visible = [b for b in btns if b.is_displayed()]
             if visible:
-                js_click(driver, visible[-1], "Podtverdit (fallback)")
+                js_click(driver, visible[-1], "Подтвердить (fallback)")
                 time.sleep(3)
                 print("  ОК Файл присоединён!")
         except Exception as e:
