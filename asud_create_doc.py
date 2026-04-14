@@ -320,14 +320,38 @@ def fill_corr_date(driver):
         return
 
     try:
-        inp.click()
+        # Прокручиваем к элементу чтобы он был в центре (и триггер не перекрывал)
+        driver.execute_script(
+            "arguments[0].scrollIntoView({block: 'center', inline: 'center'});", inp)
+        time.sleep(0.5)
+
+        # Клик через JS — обходит перекрытие другими элементами
+        driver.execute_script("arguments[0].focus(); arguments[0].click();", inp)
         time.sleep(0.3)
-        inp.clear()
+
+        # Очистка: выделяем всё и удаляем
+        inp.send_keys(Keys.CONTROL + "a")
+        time.sleep(0.2)
+        inp.send_keys(Keys.DELETE)
+        time.sleep(0.2)
+
+        # Вводим дату
         inp.send_keys(today)
+        time.sleep(0.3)
         inp.send_keys(Keys.TAB)
         print(f"  ОК Дата заполнена: {today}")
     except Exception as e:
-        print(f"  !! Ошибка заполнения даты: {e}")
+        # Финальный fallback: напрямую через JS set value + trigger change
+        try:
+            driver.execute_script("""
+                arguments[0].value = arguments[1];
+                arguments[0].dispatchEvent(new Event('input', {bubbles: true}));
+                arguments[0].dispatchEvent(new Event('change', {bubbles: true}));
+                arguments[0].dispatchEvent(new Event('blur', {bubbles: true}));
+            """, inp, today)
+            print(f"  ОК Дата заполнена через JS: {today}")
+        except Exception as e2:
+            print(f"  !! Ошибка заполнения даты: {e2}")
 
 
 def fill_delivery_method(driver):
