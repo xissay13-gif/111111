@@ -418,57 +418,113 @@ def fill_corr_date(driver):
 
 
 def fill_delivery_method(driver):
-    """Выбирает 'Электронная почта' в поле 'Способ получения'."""
+    """Выбирает 'Электронная почта' в поле 'Способ получения'.
+    Это triggerfield: клик открывает контекстное меню со списком опций."""
     print("  Способ получения: Электронная почта")
-    try:
-        # Ищем поле "Способ получения" — это выпадающий список (select или triggerfield)
-        label = driver.find_element(By.XPATH,
-            "//*[contains(text(),'Способ получения')]")
-        # Кликаем по полю рядом с лейблом чтобы открыть выпадающий список
-        parent = label.find_element(By.XPATH, "./ancestor::tr | ./ancestor::div[contains(@class,'field')]")
-        # Ищем кликабельную область — input или div триггера
-        clickable = None
-        for sel in ["input[type='text']", "div[class*='trigger']", "img[class*='trigger']"]:
+
+    # 1. Находим поле по ТОЧНОМУ лейблу
+    trigger = find_input_near_label(driver, "Способ получения")
+
+    # Запасной вариант: если нет input, ищем по лейблу и берём кликабельный div/trigger
+    if not trigger:
+        labels = driver.find_elements(By.XPATH,
+            "//*[normalize-space(text())='Способ получения']")
+        for label in labels:
             try:
-                el = parent.find_element(By.CSS_SELECTOR, sel)
-                if el.is_displayed():
-                    clickable = el
+                if not label.is_displayed():
+                    continue
+                for level in range(1, 6):
+                    parent = label
+                    for _ in range(level):
+                        parent = parent.find_element(By.XPATH, "..")
+                    # Ищем триггер — div с классом trigger или img
+                    for sel in ["div[class*='trigger']", "img[class*='trigger']",
+                                "[class*='ComboBox']", "[class*='combobox']"]:
+                        try:
+                            el = parent.find_element(By.CSS_SELECTOR, sel)
+                            if el.is_displayed():
+                                trigger = el
+                                break
+                        except Exception:
+                            continue
+                    if trigger:
+                        break
+                if trigger:
                     break
             except Exception:
                 continue
-        if not clickable:
-            # Пробуем кликнуть сам родительский элемент
-            clickable = parent
 
-        js_click(driver, clickable, "Otkryt spisok")
-        time.sleep(1)
-
-        # Ищем "Электронная почта" в выпадающем списке
-        option = WebDriverWait(driver, 10).until(
-            EC.visibility_of_element_located((By.XPATH,
-                "//*[contains(text(),'Электронная почта')]"))
-        )
-        js_click(driver, option, "Elektronnaya pochta")
-        time.sleep(0.5)
-        print("  ОК Способ получения выбран")
+    if not trigger:
+        print("  !! Поле 'Способ получения' не найдено")
         return
+
+    # 2. Прокручиваем и кликаем чтобы открыть dropdown
+    try:
+        driver.execute_script(
+            "arguments[0].scrollIntoView({block: 'center'});", trigger)
+        time.sleep(0.3)
     except Exception:
         pass
 
-    # Фоллбэк: ищем select элемент
+    js_click(driver, trigger, "Открыть список 'Способ получения'")
+    time.sleep(1.5)  # ждём появления dropdown
+
+    # 3. Ищем "Электронная почта" в появившемся меню
+    #    Варианты: div в dropdown, li, td, span
+    target_text = "Электронная почта"
+    option = None
+
+    # Сначала пробуем точное совпадение текста
+    candidates = driver.find_elements(By.XPATH,
+        f"//*[normalize-space(text())='{target_text}']")
+    for c in candidates:
+        try:
+            if c.is_displayed():
+                option = c
+                break
+        except Exception:
+            continue
+
+    # Если точного нет — частичное
+    if not option:
+        candidates = driver.find_elements(By.XPATH,
+            f"//*[contains(text(),'{target_text}')]")
+        for c in candidates:
+            try:
+                if c.is_displayed() and c.tag_name.lower() != 'input':
+                    option = c
+                    break
+            except Exception:
+                continue
+
+    if option:
+        # Прокручиваем к опции (выпадающий список может быть длинным)
+        try:
+            driver.execute_script(
+                "arguments[0].scrollIntoView({block: 'center'});", option)
+            time.sleep(0.3)
+        except Exception:
+            pass
+        js_click(driver, option, target_text)
+        time.sleep(0.5)
+        print("  ОК Способ получения выбран: Электронная почта")
+        return
+
+    # Фоллбэк: <select>
     try:
         selects = driver.find_elements(By.TAG_NAME, "select")
-        visible = [s for s in selects if s.is_displayed()]
-        for sel in visible:
-            options = sel.find_elements(By.TAG_NAME, "option")
-            for opt in options:
-                if "Электронная почта" in opt.text:
+        for sel in selects:
+            if not sel.is_displayed():
+                continue
+            for opt in sel.find_elements(By.TAG_NAME, "option"):
+                if target_text in opt.text:
                     opt.click()
                     print("  ОК Способ получения выбран (select)")
                     return
     except Exception:
         pass
-    print("  !! Поле 'Способ получения' не найдено")
+
+    print("  !! 'Электронная почта' не найдена в списке")
 
 
 def get_attachment_path():
