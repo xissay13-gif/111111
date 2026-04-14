@@ -208,38 +208,54 @@ def fill_correspondent(driver, person_name):
     initials = fio_to_initials(person_name)
     print(f"  Ищу совпадение по инициалам: {initials}")
 
-    def find_matching_result():
+    def find_all_with_surname():
+        """Все видимые элементы с фамилией (кроме input'ов)."""
         results = driver.find_elements(By.XPATH,
             f"//*[contains(text(),'{surname}')]")
-        candidates = []
+        found = []
         for r in results:
             try:
                 if not r.is_displayed() or r == corr_input:
                     continue
                 if r.tag_name.lower() == 'input':
                     continue
-                if match_correspondent(r.text, person_name):
-                    candidates.append(r)
+                found.append(r)
             except Exception:
                 continue
-        return candidates
+        return found
 
-    candidates = find_matching_result()
-    if not candidates:
-        # Жмём Enter — возможно нужно явно запустить поиск
+    all_results = find_all_with_surname()
+    if not all_results:
         corr_input.send_keys(Keys.ENTER)
         time.sleep(2)
-        candidates = find_matching_result()
+        all_results = find_all_with_surname()
 
-    if candidates:
-        # Берём наименьший по размеру (это обычно сама строка результата, не контейнер)
-        best = min(candidates, key=lambda e: len(e.text))
-        js_click(driver, best, f"Выбор: {best.text.strip()[:60]}")
+    print(f"  Найдено кандидатов с фамилией '{surname}': {len(all_results)}")
+
+    # Ищем первое совпадение по инициалам (не min, а первое по порядку — как в старой версии)
+    matched = None
+    for r in all_results:
+        try:
+            if match_correspondent(r.text, person_name):
+                matched = r
+                break
+        except Exception:
+            continue
+
+    if matched:
+        print(f"  Совпадение по инициалам: {matched.text.strip()[:80]}")
+        js_click(driver, matched, f"Выбор: {matched.text.strip()[:60]}")
         time.sleep(1)
         print(f"  ОК Корреспондент выбран: {person_name}")
+    elif all_results:
+        # Фоллбэк: берём первый результат (как в старой версии)
+        first = all_results[0]
+        print(f"  ! По инициалам '{initials}' не нашли, беру первого: {first.text.strip()[:80]}")
+        js_click(driver, first, f"Выбор (первый): {first.text.strip()[:60]}")
+        time.sleep(1)
+        print(f"  ОК Корреспондент выбран (fallback): {person_name}")
     else:
-        print(f"  !! НЕТ совпадения по инициалам '{initials}' для: {person_name}")
-        print(f"     (выбор первого попавшегося отключён, чтобы не выбрать однофамильца)")
+        print(f"  !! Корреспондент не найден: {person_name}")
 
 
 def fill_corr_number(driver):
@@ -538,21 +554,26 @@ def add_addressee(driver, person_name):
 
         print(f"  Найдено кандидатов с фамилией '{surname}': {len(all_results)}")
 
-        # Сначала ищем точное совпадение по инициалам
-        matched = [r for r in all_results
-                   if match_correspondent(r.text, person_name)]
+        # Сначала ищем точное совпадение по инициалам (первое по порядку)
+        matched = None
+        for r in all_results:
+            try:
+                if match_correspondent(r.text, person_name):
+                    matched = r
+                    break
+            except Exception:
+                continue
 
         if matched:
-            best = min(matched, key=lambda e: len(e.text))
-            print(f"  Совпадение по инициалам: {best.text.strip()[:80]}")
-            js_click(driver, best, f"Выбор: {best.text.strip()[:60]}")
+            print(f"  Совпадение по инициалам: {matched.text.strip()[:80]}")
+            js_click(driver, matched, f"Выбор: {matched.text.strip()[:60]}")
             time.sleep(1)
             print(f"  ОК Адресат добавлен: {person_name}")
         elif all_results:
-            # Фоллбэк: адресат хардкоженный, берём наименьший по тексту
-            best = min(all_results, key=lambda e: len(e.text))
-            print(f"  ! По инициалам '{initials}' не нашли, беру первого: {best.text.strip()[:80]}")
-            js_click(driver, best, f"Выбор: {best.text.strip()[:60]}")
+            # Фоллбэк: адресат хардкоженный, берём первого
+            first = all_results[0]
+            print(f"  ! По инициалам '{initials}' не нашли, беру первого: {first.text.strip()[:80]}")
+            js_click(driver, first, f"Выбор (первый): {first.text.strip()[:60]}")
             time.sleep(1)
             print(f"  ОК Адресат добавлен (fallback): {person_name}")
         else:
