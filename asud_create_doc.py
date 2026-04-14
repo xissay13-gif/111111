@@ -513,35 +513,50 @@ def add_addressee(driver, person_name):
 
         initials = fio_to_initials(person_name)
 
-        def find_matching():
+        def find_all_with_surname():
+            """Возвращает все видимые элементы с фамилией (кроме input)."""
             results = driver.find_elements(By.XPATH,
                 f"//*[contains(text(),'{surname}')]")
-            cands = []
+            found = []
             for r in results:
                 try:
                     if not r.is_displayed() or r == addr_input:
                         continue
                     if r.tag_name.lower() == 'input':
                         continue
-                    if match_correspondent(r.text, person_name):
-                        cands.append(r)
+                    found.append(r)
                 except Exception:
                     continue
-            return cands
+            return found
 
-        candidates = find_matching()
-        if not candidates:
+        all_results = find_all_with_surname()
+        if not all_results:
+            # Попробуем Enter
             addr_input.send_keys(Keys.ENTER)
             time.sleep(2)
-            candidates = find_matching()
+            all_results = find_all_with_surname()
 
-        if candidates:
-            best = min(candidates, key=lambda e: len(e.text))
+        print(f"  Найдено кандидатов с фамилией '{surname}': {len(all_results)}")
+
+        # Сначала ищем точное совпадение по инициалам
+        matched = [r for r in all_results
+                   if match_correspondent(r.text, person_name)]
+
+        if matched:
+            best = min(matched, key=lambda e: len(e.text))
+            print(f"  Совпадение по инициалам: {best.text.strip()[:80]}")
             js_click(driver, best, f"Выбор: {best.text.strip()[:60]}")
             time.sleep(1)
             print(f"  ОК Адресат добавлен: {person_name}")
+        elif all_results:
+            # Фоллбэк: адресат хардкоженный, берём наименьший по тексту
+            best = min(all_results, key=lambda e: len(e.text))
+            print(f"  ! По инициалам '{initials}' не нашли, беру первого: {best.text.strip()[:80]}")
+            js_click(driver, best, f"Выбор: {best.text.strip()[:60]}")
+            time.sleep(1)
+            print(f"  ОК Адресат добавлен (fallback): {person_name}")
         else:
-            print(f"  !! Адресат не найден по инициалам '{initials}': {person_name}")
+            print(f"  !! Адресат не найден в списке: {person_name}")
     except Exception as e:
         print(f"  !! Ошибка добавления адресата: {e}")
 
