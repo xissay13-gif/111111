@@ -588,66 +588,71 @@ def wait_modal_closed(driver, timeout=15):
 
 
 def attach_content(driver, file_path):
-    """Нажимает 'Присоединить содержимое' и загружает файл.
-    Избегаем открытия нативного Windows Explorer — шлём путь прямо
-    в скрытый input[type=file] до любых кликов по кнопкам загрузки."""
+    """Присоединяет файл через <input type=file> напрямую, без клика
+    на 'Присоединить содержимое' (он открывает нативный Explorer)."""
     print(f"  Присоединение файла: {os.path.basename(file_path)}")
 
-    # Кликаем кнопку "Присоединить содержимое" — открывается модалка
-    try:
-        btn = WebDriverWait(driver, TIMEOUT).until(
-            EC.presence_of_element_located((By.XPATH,
-                "//div[contains(text(),'Присоединить содержимое')]"))
-        )
-        js_click(driver, btn, "Присоединить содержимое")
-        time.sleep(2)
-    except Exception as e:
-        print(f"  !! Кнопка 'Присоединить содержимое' не найдена: {e}")
-        return
-
-    # Ищем input[type='file'] — делаем его видимым через JS (чтобы send_keys работал
-    # гарантированно), но НЕ кликаем. send_keys в input[type=file] НЕ открывает
-    # нативный диалог, это просто присваивание пути.
+    # Сначала ищем input[type=file] БЕЗ кликов — часто он уже есть в DOM
     file_input = None
     try:
         inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='file']")
-        print(f"  Найдено input[type=file]: {len(inputs)}")
+        print(f"  Найдено input[type=file] до клика: {len(inputs)}")
         if inputs:
             file_input = inputs[0]
-            # Снимаем display:none/visibility:hidden чтобы selenium мог работать
-            driver.execute_script("""
-                var el = arguments[0];
-                el.style.display = 'block';
-                el.style.visibility = 'visible';
-                el.style.opacity = '1';
-                el.style.width = '1px';
-                el.style.height = '1px';
-                el.removeAttribute('hidden');
-            """, file_input)
-            time.sleep(0.3)
-    except Exception as e:
-        print(f"  !! Ошибка поиска input[type=file]: {e}")
-        return
+    except Exception:
+        pass
+
+    # Если не нашли — пробуем открыть модалку ОДИН раз через JS клик
+    # (JS-клик на label обычно НЕ открывает нативный Explorer, в отличие
+    # от реального mouse-клика)
+    if not file_input:
+        try:
+            btn = driver.find_element(By.XPATH,
+                "//div[contains(text(),'Присоединить содержимое')]")
+            driver.execute_script("arguments[0].click();", btn)
+            time.sleep(2)
+            inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='file']")
+            print(f"  Найдено input[type=file] после JS-клика: {len(inputs)}")
+            if inputs:
+                file_input = inputs[0]
+        except Exception as e:
+            print(f"  !! Не удалось открыть модалку: {e}")
 
     if not file_input:
         print("  !! input[type='file'] не найден на странице!")
         return
 
-    # Отправляем путь к файлу — это НЕ открывает нативный диалог
+    # Делаем input видимым (send_keys работает только на displayed элементы)
+    try:
+        driver.execute_script("""
+            var el = arguments[0];
+            el.style.display = 'block';
+            el.style.visibility = 'visible';
+            el.style.opacity = '1';
+            el.style.width = '1px';
+            el.style.height = '1px';
+            el.style.position = 'static';
+            el.removeAttribute('hidden');
+        """, file_input)
+        time.sleep(0.3)
+    except Exception:
+        pass
+
+    # ВАЖНО: send_keys в input[type=file] НЕ открывает Explorer,
+    # это просто присваивание пути через WebDriver API
     try:
         file_input.send_keys(file_path)
         time.sleep(1)
-        # Триггерим change — некоторые фреймворки ждут этого события
         driver.execute_script("""
             arguments[0].dispatchEvent(new Event('change', {bubbles: true}));
         """, file_input)
         time.sleep(1)
         print(f"  ОК Файл выбран: {os.path.basename(file_path)}")
     except Exception as e:
-        print(f"  !! Ошибка отправки пути к файлу: {e}")
+        print(f"  !! Ошибка отправки файла: {e}")
         return
 
-    # Нажимаем кнопку подтверждения в диалоге
+    # Подтверждаем загрузку в модалке
     try:
         confirm_btn = WebDriverWait(driver, 10).until(
             EC.presence_of_element_located((By.CSS_SELECTOR,
@@ -657,10 +662,9 @@ def attach_content(driver, file_path):
         time.sleep(3)
         print("  ОК Файл присоединён!")
     except Exception:
-        # Фоллбэк по тексту кнопки
         try:
             btns = driver.find_elements(By.XPATH,
-                "//div[contains(text(),'Присоединить содержимое')] | //button[contains(text(),'Присоединить')]")
+                "//button[contains(text(),'Присоединить')] | //div[contains(text(),'Присоединить')]")
             visible = [b for b in btns if b.is_displayed()]
             if visible:
                 js_click(driver, visible[-1], "Подтвердить (fallback)")
