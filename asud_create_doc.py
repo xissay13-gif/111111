@@ -296,6 +296,7 @@ def create_correspondent(driver, person_name):
         time.sleep(2)
     except Exception as e:
         print(f"    !! Ошибка шаг 1: {e}")
+        close_open_modals(driver)
         return
 
     # ШАГ 2: В "Поиск корреспондента" нажать "Добавить"
@@ -315,29 +316,58 @@ def create_correspondent(driver, person_name):
         time.sleep(2)
     except Exception as e:
         print(f"    !! Ошибка шаг 2: {e}")
+        close_open_modals(driver)
         return
 
     # ШАГ 3: В "Редактирование организации" ввести фамилию в "Поиск организации"
     print("    [3/7] Поиск организации...")
+    # Ждём чтобы диалог дорисовался
+    time.sleep(2)
+
     try:
-        org_input = find_input_near_label(driver, "Поиск организации")
-        if not org_input:
-            # Фоллбэк: первый видимый input в диалоге
-            inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='text']")
-            for i in inputs:
-                if i.is_displayed() and i.get_attribute("readonly") is None:
-                    org_input = i
+        # Находим input заново, с повторами на stale
+        org_input = None
+        for retry in range(3):
+            try:
+                org_input = find_input_near_label(driver, "Поиск организации")
+                if not org_input:
+                    # Фоллбэк: первый видимый не-readonly input
+                    inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='text']")
+                    for i in inputs:
+                        if i.is_displayed() and i.get_attribute("readonly") is None:
+                            org_input = i
+                            break
+                if org_input:
+                    # Проверяем что элемент не stale
+                    _ = org_input.is_displayed()
                     break
+            except Exception:
+                org_input = None
+                time.sleep(1)
+
         if not org_input:
             print("    !! Поле поиска организации не найдено")
+            close_open_modals(driver)
             return
 
-        org_input.click()
-        time.sleep(0.3)
-        org_input.clear()
-        for char in surname:
-            org_input.send_keys(char)
-            time.sleep(0.1)
+        # Клик + ввод текста с обработкой stale
+        for retry in range(3):
+            try:
+                org_input.click()
+                time.sleep(0.3)
+                org_input.clear()
+                for char in surname:
+                    org_input.send_keys(char)
+                    time.sleep(0.1)
+                break
+            except Exception as e:
+                print(f"    ! Попытка {retry + 1} ввода: {type(e).__name__}, повторяю...")
+                time.sleep(1)
+                # Перефиним input
+                org_input = find_input_near_label(driver, "Поиск организации")
+                if not org_input:
+                    close_open_modals(driver)
+                    return
         time.sleep(2)
 
         # Выбираем вариант с точной фамилией (первый где текст == surname)
@@ -375,6 +405,7 @@ def create_correspondent(driver, person_name):
             print(f"    ОК Организация выбрана: {target.text.strip()[:60]}")
     except Exception as e:
         print(f"    !! Ошибка шаг 3: {e}")
+        close_open_modals(driver)
         return
 
     # ШАГ 4: В секции "Физические лица" нажать "Добавить"
@@ -407,6 +438,7 @@ def create_correspondent(driver, person_name):
         time.sleep(2)
     except Exception as e:
         print(f"    !! Ошибка шаг 4: {e}")
+        close_open_modals(driver)
         return
 
     # ШАГ 5: Заполнить карточку физ. лица и нажать "Добавить"
@@ -452,6 +484,7 @@ def create_correspondent(driver, person_name):
             time.sleep(2)
     except Exception as e:
         print(f"    !! Ошибка шаг 5: {e}")
+        close_open_modals(driver)
         return
 
     # ШАГ 6: Нажать "Выбрать физ. лиц"
@@ -477,6 +510,7 @@ def create_correspondent(driver, person_name):
             return
     except Exception as e:
         print(f"    !! Ошибка шаг 6: {e}")
+        close_open_modals(driver)
         return
 
     # ШАГ 7: Нажать "Готово" в "Поиск корреспондента"
@@ -501,6 +535,7 @@ def create_correspondent(driver, person_name):
             print("    !! Кнопка 'Готово' не найдена")
     except Exception as e:
         print(f"    !! Ошибка шаг 7: {e}")
+        close_open_modals(driver)
 
 
 def fill_correspondent(driver, person_name):
@@ -867,6 +902,28 @@ def wait_modal_closed(driver, timeout=15):
             time.sleep(1)
         except Exception:
             pass
+
+
+def close_open_modals(driver, max_escapes=5):
+    """Закрывает все открытые модалки/диалоги через Escape.
+    Используется при сбое в create_correspondent, чтобы последующие
+    шаги заполнения формы (адресат и т.д.) не блокировались."""
+    print("  Закрываю открытые диалоги через Escape...")
+    try:
+        from selenium.webdriver.common.action_chains import ActionChains as AC
+        for i in range(max_escapes):
+            # Проверяем есть ли видимые модалки
+            modals = driver.find_elements(By.CSS_SELECTOR,
+                "div[class*='ModalPanel'][class*='panel']")
+            visible_modals = [m for m in modals if m.is_displayed()]
+            if not visible_modals:
+                print(f"  ОК Все модалки закрыты (попыток: {i})")
+                return
+            AC(driver).send_keys(Keys.ESCAPE).perform()
+            time.sleep(1)
+        print(f"  ! Не все модалки закрылись после {max_escapes} Escape")
+    except Exception as e:
+        print(f"  ! Ошибка закрытия модалок: {e}")
 
 
 def attach_content(driver, file_path):
