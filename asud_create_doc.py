@@ -565,6 +565,28 @@ def get_attachment_path():
     return os.path.join(base_dir, msg_files[0])
 
 
+def wait_modal_closed(driver, timeout=15):
+    """Ждёт пока закроется модальное окно GXT ModalPanel."""
+    print("  Жду закрытия модального окна...")
+    try:
+        WebDriverWait(driver, timeout).until(
+            lambda d: not any(
+                m.is_displayed() for m in d.find_elements(
+                    By.CSS_SELECTOR, "div[class*='ModalPanel'][class*='panel']"
+                )
+            )
+        )
+        print("  ОК Модалка закрыта")
+    except Exception:
+        print("  ! Модалка всё ещё открыта — пробую закрыть через Esc")
+        try:
+            from selenium.webdriver.common.action_chains import ActionChains as AC
+            AC(driver).send_keys(Keys.ESCAPE).perform()
+            time.sleep(1)
+        except Exception:
+            pass
+
+
 def attach_content(driver, file_path):
     """Нажимает 'Присоединить содержимое' и загружает файл.
     Избегаем открытия нативного Windows Explorer — шлём путь прямо
@@ -912,6 +934,7 @@ def create_one_document(driver, doc_data, index, total):
     if doc_data.get("файл"):
         print("\n[6/8] Присоединение содержимого...")
         attach_content(driver, doc_data["файл"])
+        wait_modal_closed(driver)
 
     # ШАГ 7: Вкладка "Рассылка" — добавить Халецкую
     print("\n[7/9] Рассылка — добавить Халецкую...")
