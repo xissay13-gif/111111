@@ -16,6 +16,12 @@ import sys
 import os
 from datetime import date
 import openpyxl
+
+try:
+    import pyautogui
+    PYAUTOGUI_AVAILABLE = True
+except ImportError:
+    PYAUTOGUI_AVAILABLE = False
 from selenium import webdriver
 from selenium.webdriver.edge.service import Service as EdgeService
 from selenium.webdriver.edge.options import Options as EdgeOptions
@@ -588,64 +594,92 @@ def wait_modal_closed(driver, timeout=15):
 
 
 def attach_content(driver, file_path):
-    """Присоединяет файл через <input type=file> напрямую, без клика
-    на 'Присоединить содержимое' (он открывает нативный Explorer)."""
+    """Присоединяет файл: пробует сначала через input[type=file],
+    если не получается — использует pyautogui для ввода пути в нативный Explorer."""
     print(f"  Присоединение файла: {os.path.basename(file_path)}")
 
-    # Проверяем: есть ли input[type=file] без клика
+    # Стратегия 1: input[type=file] уже в DOM без кликов
     inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='file']")
     print(f"  input[type=file] до клика: {len(inputs)}")
 
-    # Если нет — открываем модалку JS-кликом (не настоящей мышью)
-    if not inputs:
+    file_attached = False
+
+    if inputs:
         try:
-            btn = driver.find_element(By.XPATH,
-                "//div[contains(text(),'Присоединить содержимое')]")
-            driver.execute_script("arguments[0].click();", btn)
-            time.sleep(3)  # даём модалке полностью прорисоваться
+            driver.execute_script("""
+                var el = arguments[0];
+                el.style.display = 'block';
+                el.style.visibility = 'visible';
+                el.style.opacity = '1';
+                el.removeAttribute('hidden');
+            """, inputs[0])
+            time.sleep(0.3)
+            inputs[0].send_keys(file_path)
+            time.sleep(1)
+            driver.execute_script(
+                "arguments[0].dispatchEvent(new Event('change', {bubbles: true}));",
+                inputs[0])
+            print(f"  ОК Файл отправлен через input[type=file]")
+            file_attached = True
         except Exception as e:
-            print(f"  !! Не удалось открыть модалку: {e}")
+            print(f"  ! Не удалось через input: {e}")
+
+    # Стратегия 2: кликаем кнопку — открывается нативный Explorer,
+    # pyautogui печатает путь + Enter
+    if not file_attached:
+        if not PYAUTOGUI_AVAILABLE:
+            print("  !! pyautogui не установлен — пропускаю прикрепление")
             return
 
-    # Ищем input заново (предыдущие ссылки могли стать stale после рендера)
-    # Пробуем несколько раз — модалка рендерится асинхронно
-    file_input = None
-    for attempt in range(5):
         try:
-            inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='file']")
-            if inputs:
-                file_input = inputs[0]
-                # Сразу же используем — не сохраняем ссылку
-                # Делаем видимым и шлём путь в одной "сессии"
-                driver.execute_script("""
-                    var el = arguments[0];
-                    el.style.display = 'block';
-                    el.style.visibility = 'visible';
-                    el.style.opacity = '1';
-                    el.style.width = '1px';
-                    el.style.height = '1px';
-                    el.style.position = 'static';
-                    el.removeAttribute('hidden');
-                """, file_input)
-                time.sleep(0.3)
-                file_input.send_keys(file_path)
-                time.sleep(1)
-                driver.execute_script(
-                    "arguments[0].dispatchEvent(new Event('change', {bubbles: true}));",
-                    file_input)
-                time.sleep(1)
-                print(f"  ОК Файл выбран: {os.path.basename(file_path)}")
-                break
-            time.sleep(1)
+            btn = WebDriverWait(driver, TIMEOUT).until(
+                EC.presence_of_element_located((By.XPATH,
+                    "//div[contains(text(),'Присоединить содержимое')]"))
+            )
+            js_click(driver, btn, "Присоединить содержимое")
         except Exception as e:
-            # Stale reference — переиспользуем цикл, найдём заново
-            print(f"  ! Попытка {attempt + 1}: {type(e).__name__}, повторяю...")
-            time.sleep(1)
-            continue
+            print(f"  !! Кнопка 'Присоединить содержимое' не найдена: {e}")
+            return
 
-    if not file_input:
-        print("  !! input[type='file'] не найден на странице!")
+        # Ждём пока откроется Explorer
+        print("  Жду открытия нативного Explorer (3 сек)...")
+        time.sleep(3)
+
+        try:
+            # Печатаем полный путь к файлу в поле имени файла
+            print(f"  Печатаю путь через pyautogui...")
+            # Используем pyperclip-подход: копируем в буфер и Ctrl+V (надёжнее typewrite)
+            # т.к. typewrite не поддерживает кириллицу
+            import subprocess
+            # Кладём путь в буфер обмена через PowerShell (без доп. зависимостей)
+            subprocess.run(
+                ['powershell', '-command',
+                 f'Set-Clipboard -Value "{file_path}"'],
+                check=False, capture_output=True
+            )
+            time.sleep(0.5)
+            pyautogui.hotkey('ctrl', 'v')
+            time.sleep(0.5)
+            pyautogui.press('enter')
+            time.sleep(2)
+            print(f"  ОК Файл выбран через Explorer: {os.path.basename(file_path)}")
+            file_attached = True
+        except Exception as e:
+            print(f"  !! Ошибка pyautogui: {e}")
+            # Пробуем закрыть Explorer
+            try:
+                pyautogui.press('escape')
+                time.sleep(1)
+            except Exception:
+                pass
+            return
+
+    if not file_attached:
+        print("  !! Не удалось прикрепить файл")
         return
+
+    # Небольшая пауза на обработку загрузки
+    time.sleep(2)
 
     # Подтверждаем загрузку в модалке
     try:
