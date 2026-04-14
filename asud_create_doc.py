@@ -203,8 +203,6 @@ def fill_correspondent(driver, person_name):
     else:
         print(f"  !! НЕТ совпадения по инициалам '{initials}' для: {person_name}")
         print(f"     (выбор первого попавшегося отключён, чтобы не выбрать однофамильца)")
-    except Exception as e:
-        print(f"  !! Ошибка выбора корреспондента: {e}")
 
 
 def fill_corr_number(driver):
