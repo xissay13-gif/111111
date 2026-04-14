@@ -197,14 +197,13 @@ def fio_to_initials(full_name):
 
 
 def match_correspondent(text, full_name):
-    """Проверяет совпадение: текст из АСУД (инициалы) vs полное ФИО из Excel."""
+    """Проверяет совпадение: текст из АСУД (инициалы) vs полное ФИО из Excel.
+    Мягкая версия — fallback на фамилию. Подходит для адресата (Басманов —
+    один в базе). НЕ использовать для корреспондента (однофамильцы!)."""
     text_clean = text.strip()
-    # Прямое совпадение по полному ФИО
     if full_name in text_clean:
         return True
-    # Совпадение по инициалам: "Калганова Т А" или "Калганова Т.А." и т.п.
     initials = fio_to_initials(full_name)
-    # Убираем точки для сравнения
     text_norm = text_clean.replace('.', '').replace(',', '')
     initials_norm = initials.replace('.', '').replace(',', '')
     if initials_norm.lower() in text_norm.lower():
@@ -212,6 +211,22 @@ def match_correspondent(text, full_name):
     # Совпадение только по фамилии (фоллбэк)
     surname = full_name.split()[0]
     if text_clean.lower().startswith(surname.lower()):
+        return True
+    return False
+
+
+def match_correspondent_strict(text, full_name):
+    """Строгая проверка: ТОЛЬКО полное ФИО или инициалы.
+    Без фоллбэка на фамилию — чтобы не выбрать однофамильца."""
+    text_clean = text.strip()
+    # Прямое совпадение по полному ФИО
+    if full_name in text_clean:
+        return True
+    # Совпадение по инициалам: "Калганова Т А" или "Калганова Т.А."
+    initials = fio_to_initials(full_name)
+    text_norm = text_clean.replace('.', '').replace(',', '')
+    initials_norm = initials.replace('.', '').replace(',', '')
+    if initials_norm.lower() in text_norm.lower():
         return True
     return False
 
@@ -538,11 +553,12 @@ def fill_correspondent(driver, person_name):
 
     print(f"  Найдено кандидатов с фамилией '{surname}': {len(all_results)}")
 
-    # Ищем первое совпадение по инициалам
+    # Ищем СТРОГОЕ совпадение по инициалам (без фоллбэка на фамилию,
+    # иначе выберем однофамильца вместо создания нового)
     target = None
     for r in all_results:
         try:
-            if match_correspondent(r.text, person_name):
+            if match_correspondent_strict(r.text, person_name):
                 target = r
                 print(f"  Совпадение по инициалам: {r.text.strip()[:80]}")
                 break
