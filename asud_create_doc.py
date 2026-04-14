@@ -241,6 +241,8 @@ def fill_correspondent(driver, person_name):
 
     # Вводим фамилию для поиска
     surname = person_name.split()[0]
+    initials = fio_to_initials(person_name)
+
     corr_input.click()
     time.sleep(0.3)
     corr_input.clear()
@@ -251,58 +253,67 @@ def fill_correspondent(driver, person_name):
     print(f"  ОК Введена фамилия: {surname}")
     time.sleep(2)
 
-    # Сначала пробуем найти совпадение по инициалам в выпадающем списке
-    initials = fio_to_initials(person_name)
-    print(f"  Ищу совпадение по инициалам: {initials}")
+    # Стратегия: используем клавиатуру (↓+Enter) — надёжнее кликов для autocomplete
+    # Сначала проверяем, есть ли совпадение по инициалам в выпадающем списке.
+    # Если нашли конкретную позицию — стрелочками доходим до неё и жмём Enter.
 
-    def find_all_with_surname():
-        """Все видимые элементы с фамилией (кроме input'ов)."""
-        results = driver.find_elements(By.XPATH,
+    def get_dropdown_items():
+        """Возвращает список текстов элементов выпадающего списка в порядке появления."""
+        items = driver.find_elements(By.XPATH,
             f"//*[contains(text(),'{surname}')]")
-        found = []
-        for r in results:
+        texts = []
+        for it in items:
             try:
-                if not r.is_displayed() or r == corr_input:
+                if not it.is_displayed() or it == corr_input:
                     continue
-                if r.tag_name.lower() == 'input':
+                if it.tag_name.lower() == 'input':
                     continue
-                found.append(r)
+                t = it.text.strip()
+                if t and t not in texts:
+                    texts.append(t)
             except Exception:
                 continue
-        return found
+        return texts
 
-    all_results = find_all_with_surname()
-    if not all_results:
+    items = get_dropdown_items()
+    if not items:
+        # Жмём Enter — возможно надо явно запустить поиск
         corr_input.send_keys(Keys.ENTER)
         time.sleep(2)
-        all_results = find_all_with_surname()
+        items = get_dropdown_items()
 
-    print(f"  Найдено кандидатов с фамилией '{surname}': {len(all_results)}")
+    print(f"  Найдено вариантов: {len(items)}")
+    for i, t in enumerate(items[:5]):
+        print(f"    {i+1}. {t[:80]}")
 
-    # Ищем первое совпадение по инициалам (не min, а первое по порядку — как в старой версии)
-    matched = None
-    for r in all_results:
-        try:
-            if match_correspondent(r.text, person_name):
-                matched = r
-                break
-        except Exception:
-            continue
+    # Ищем позицию совпадения по инициалам
+    match_index = -1
+    for idx, text in enumerate(items):
+        if match_correspondent(text, person_name):
+            match_index = idx
+            print(f"  Совпадение на позиции {idx + 1}: {text[:80]}")
+            break
 
-    if matched:
-        print(f"  Совпадение по инициалам: {matched.text.strip()[:80]}")
-        js_click(driver, matched, f"Выбор: {matched.text.strip()[:60]}")
-        time.sleep(1)
-        print(f"  ОК Корреспондент выбран: {person_name}")
-    elif all_results:
-        # Фоллбэк: берём первый результат (как в старой версии)
-        first = all_results[0]
-        print(f"  ! По инициалам '{initials}' не нашли, беру первого: {first.text.strip()[:80]}")
-        js_click(driver, first, f"Выбор (первый): {first.text.strip()[:60]}")
-        time.sleep(1)
-        print(f"  ОК Корреспондент выбран (fallback): {person_name}")
-    else:
+    if match_index < 0 and items:
+        # Фоллбэк — первый
+        match_index = 0
+        print(f"  ! По инициалам '{initials}' не нашли, беру первого")
+
+    if match_index < 0:
         print(f"  !! Корреспондент не найден: {person_name}")
+        return
+
+    # Фокусируемся на поле и листаем стрелочками
+    corr_input.click()
+    time.sleep(0.3)
+    # Стрелка вниз - на первый элемент, потом нужное кол-во раз до нужной позиции
+    for _ in range(match_index + 1):
+        corr_input.send_keys(Keys.ARROW_DOWN)
+        time.sleep(0.15)
+    # Enter — подтверждаем выбор
+    corr_input.send_keys(Keys.ENTER)
+    time.sleep(1)
+    print(f"  ОК Корреспондент выбран: {person_name}")
 
 
 def fill_corr_number(driver):
@@ -610,7 +621,8 @@ def attach_content(driver, file_path):
 
 
 def add_addressee(driver, person_name):
-    """Добавляет адресата через combobox рядом с разделом 'Адресаты'."""
+    """Добавляет адресата через combobox рядом с разделом 'Адресаты'.
+    Используем клавиши ↓+Enter вместо кликов — надёжнее для autocomplete."""
     print(f"  Адресат: {person_name}")
     try:
         addr_input = find_input_near_label(driver, "Адресаты")
@@ -620,6 +632,8 @@ def add_addressee(driver, person_name):
             return
 
         surname = person_name.split()[0]
+        initials = fio_to_initials(person_name)
+
         addr_input.click()
         time.sleep(0.5)
         addr_input.clear()
@@ -630,57 +644,56 @@ def add_addressee(driver, person_name):
         print(f"  ОК Введена фамилия: {surname}")
         time.sleep(2)
 
-        initials = fio_to_initials(person_name)
-
-        def find_all_with_surname():
-            """Возвращает все видимые элементы с фамилией (кроме input)."""
-            results = driver.find_elements(By.XPATH,
+        def get_dropdown_items():
+            items = driver.find_elements(By.XPATH,
                 f"//*[contains(text(),'{surname}')]")
-            found = []
-            for r in results:
+            texts = []
+            for it in items:
                 try:
-                    if not r.is_displayed() or r == addr_input:
+                    if not it.is_displayed() or it == addr_input:
                         continue
-                    if r.tag_name.lower() == 'input':
+                    if it.tag_name.lower() == 'input':
                         continue
-                    found.append(r)
+                    t = it.text.strip()
+                    if t and t not in texts:
+                        texts.append(t)
                 except Exception:
                     continue
-            return found
+            return texts
 
-        all_results = find_all_with_surname()
-        if not all_results:
-            # Попробуем Enter
+        items = get_dropdown_items()
+        if not items:
             addr_input.send_keys(Keys.ENTER)
             time.sleep(2)
-            all_results = find_all_with_surname()
+            items = get_dropdown_items()
 
-        print(f"  Найдено кандидатов с фамилией '{surname}': {len(all_results)}")
+        print(f"  Найдено вариантов: {len(items)}")
+        for i, t in enumerate(items[:5]):
+            print(f"    {i+1}. {t[:80]}")
 
-        # Сначала ищем точное совпадение по инициалам (первое по порядку)
-        matched = None
-        for r in all_results:
-            try:
-                if match_correspondent(r.text, person_name):
-                    matched = r
-                    break
-            except Exception:
-                continue
+        match_index = -1
+        for idx, text in enumerate(items):
+            if match_correspondent(text, person_name):
+                match_index = idx
+                print(f"  Совпадение на позиции {idx + 1}: {text[:80]}")
+                break
 
-        if matched:
-            print(f"  Совпадение по инициалам: {matched.text.strip()[:80]}")
-            js_click(driver, matched, f"Выбор: {matched.text.strip()[:60]}")
-            time.sleep(1)
-            print(f"  ОК Адресат добавлен: {person_name}")
-        elif all_results:
-            # Фоллбэк: адресат хардкоженный, берём первого
-            first = all_results[0]
-            print(f"  ! По инициалам '{initials}' не нашли, беру первого: {first.text.strip()[:80]}")
-            js_click(driver, first, f"Выбор (первый): {first.text.strip()[:60]}")
-            time.sleep(1)
-            print(f"  ОК Адресат добавлен (fallback): {person_name}")
-        else:
+        if match_index < 0 and items:
+            match_index = 0
+            print(f"  ! По инициалам '{initials}' не нашли, беру первого")
+
+        if match_index < 0:
             print(f"  !! Адресат не найден в списке: {person_name}")
+            return
+
+        addr_input.click()
+        time.sleep(0.3)
+        for _ in range(match_index + 1):
+            addr_input.send_keys(Keys.ARROW_DOWN)
+            time.sleep(0.15)
+        addr_input.send_keys(Keys.ENTER)
+        time.sleep(1)
+        print(f"  ОК Адресат добавлен: {person_name}")
     except Exception as e:
         print(f"  !! Ошибка добавления адресата: {e}")
 
