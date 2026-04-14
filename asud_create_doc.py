@@ -416,24 +416,82 @@ def attach_content(driver, file_path):
 
 
 def add_addressee(driver, person_name):
-    """Добавляет адресата на вкладке Реквизиты через кнопку '+'."""
+    """Добавляет адресата через combobox рядом с разделом 'Адресаты'."""
     print(f"  Adresat: {person_name}")
     try:
-        # Ищем кнопку "+" рядом с разделом "Адресаты"
-        plus_buttons = driver.find_elements(By.CSS_SELECTOR, "img[src*='add']")
-        visible_plus = [b for b in plus_buttons if b.is_displayed()]
-        if not visible_plus:
-            # Фоллбэк: ищем кнопку "+" по другим селекторам
-            plus_buttons = driver.find_elements(By.XPATH,
-                "//div[contains(@class,'add')] | //img[contains(@class,'add')]")
-            visible_plus = [b for b in plus_buttons if b.is_displayed()]
+        # Находим лейбл "Адресаты" и combobox-поле в его контейнере
+        section = driver.find_element(By.XPATH,
+            "//*[contains(text(),'Адресаты') and not(contains(text(),'Добавить'))]")
 
-        if visible_plus:
-            js_click(driver, visible_plus[0], "+ Adresat")
+        addr_input = None
+        parent = section
+        for _ in range(1, 8):
+            try:
+                parent = parent.find_element(By.XPATH, "..")
+                inputs = parent.find_elements(By.CSS_SELECTOR,
+                    "input[id*='select_combobox-input'], input[type='text']")
+                visible = [i for i in inputs
+                           if i.is_displayed() and i.get_attribute("readonly") is None]
+                if visible:
+                    addr_input = visible[0]
+                    break
+            except Exception:
+                continue
+
+        if not addr_input:
+            print("  !! Pole adresata ne najdeno")
+            return
+
+        surname = person_name.split()[0]
+        addr_input.click()
+        time.sleep(0.5)
+        addr_input.clear()
+        time.sleep(0.3)
+        for char in surname:
+            addr_input.send_keys(char)
+            time.sleep(0.1)
+        print(f"  OK Vvedena familiya: {surname}")
+        time.sleep(2)
+
+        # Ищем в выпадающем списке
+        results = driver.find_elements(By.XPATH,
+            f"//*[contains(text(),'{surname}')]")
+        visible_results = [r for r in results if r.is_displayed() and r != addr_input]
+
+        if not visible_results:
+            addr_input.send_keys(Keys.ENTER)
             time.sleep(2)
-            add_person_from_directory(driver, person_name, "Adresat")
-        else:
-            print("  !! Knopka + ne najdena dlya adresatov")
+            results = driver.find_elements(By.XPATH,
+                f"//*[contains(text(),'{surname}')]")
+            visible_results = [r for r in results if r.is_displayed() and r != addr_input]
+
+        for r in visible_results:
+            try:
+                tag = r.tag_name.lower()
+                if tag == 'input':
+                    continue
+                if match_correspondent(r.text, person_name):
+                    js_click(driver, r, f"Vybor: {r.text.strip()}")
+                    time.sleep(1)
+                    print(f"  OK Adresat dobavlen: {person_name}")
+                    return
+            except Exception:
+                continue
+
+        # Если по инициалам не нашли — берём первый подходящий
+        for r in visible_results:
+            try:
+                if r.tag_name.lower() == 'input':
+                    continue
+                if r.is_displayed():
+                    js_click(driver, r, f"Vybor (pervyj): {r.text.strip()}")
+                    time.sleep(1)
+                    print(f"  OK Adresat dobavlen: {person_name}")
+                    return
+            except Exception:
+                continue
+
+        print(f"  !! Adresat ne najden v spiske: {person_name}")
     except Exception as e:
         print(f"  !! Oshibka dobavleniya adresata: {e}")
 
