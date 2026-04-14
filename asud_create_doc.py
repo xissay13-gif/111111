@@ -325,49 +325,52 @@ def create_correspondent(driver, person_name):
     time.sleep(2)
 
     try:
-        # Находим input заново, с повторами на stale
-        org_input = None
-        for retry in range(3):
-            try:
-                org_input = find_input_near_label(driver, "Поиск организации")
-                if not org_input:
-                    # Фоллбэк: первый видимый не-readonly input
-                    inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='text']")
-                    for i in inputs:
-                        if i.is_displayed() and i.get_attribute("readonly") is None:
-                            org_input = i
-                            break
-                if org_input:
-                    # Проверяем что элемент не stale
-                    _ = org_input.is_displayed()
-                    break
-            except Exception:
-                org_input = None
-                time.sleep(1)
+        # Ищем input рядом с лейблом "Поиск организации" и ВВОДИМ значение
+        # через JS в одной операции — чтобы избежать stale element reference.
+        # JS возвращает 'ok' если нашёл и ввёл, 'no-label'/'no-input' если не удалось.
+        js_result = driver.execute_script("""
+            var surname = arguments[0];
+            // Ищем все элементы с текстом "Поиск организации"
+            var xpath = "//*[normalize-space(text())='Поиск организации']";
+            var iter = document.evaluate(xpath, document, null,
+                XPathResult.ORDERED_NODE_ITERATOR_TYPE, null);
+            var labels = [];
+            var node;
+            while ((node = iter.iterateNext()) !== null) {
+                if (node.offsetParent !== null) labels.push(node);
+            }
+            if (labels.length === 0) return 'no-label';
 
-        if not org_input:
-            print("    !! Поле поиска организации не найдено")
+            // Для каждого лейбла ищем input рядом, поднимаясь вверх по DOM
+            for (var li = 0; li < labels.length; li++) {
+                var parent = labels[li];
+                for (var lvl = 0; lvl < 6; lvl++) {
+                    parent = parent.parentElement;
+                    if (!parent) break;
+                    var inputs = parent.querySelectorAll('input[type="text"]');
+                    for (var i = 0; i < inputs.length; i++) {
+                        var inp = inputs[i];
+                        if (inp.offsetParent !== null && !inp.readOnly) {
+                            // Нашли input — вводим
+                            inp.focus();
+                            inp.value = surname;
+                            inp.dispatchEvent(new Event('input', {bubbles: true}));
+                            inp.dispatchEvent(new Event('keyup', {bubbles: true}));
+                            inp.dispatchEvent(new Event('change', {bubbles: true}));
+                            return 'ok';
+                        }
+                    }
+                }
+            }
+            return 'no-input';
+        """, surname)
+        print(f"    JS ввод в Поиск организации: {js_result}")
+
+        if js_result != 'ok':
+            print(f"    !! Не удалось ввести в поле (результат: {js_result})")
             close_open_modals(driver)
             return
 
-        # Клик + ввод текста с обработкой stale
-        for retry in range(3):
-            try:
-                org_input.click()
-                time.sleep(0.3)
-                org_input.clear()
-                for char in surname:
-                    org_input.send_keys(char)
-                    time.sleep(0.1)
-                break
-            except Exception as e:
-                print(f"    ! Попытка {retry + 1} ввода: {type(e).__name__}, повторяю...")
-                time.sleep(1)
-                # Перефиним input
-                org_input = find_input_near_label(driver, "Поиск организации")
-                if not org_input:
-                    close_open_modals(driver)
-                    return
         time.sleep(2)
 
         # Выбираем вариант с точной фамилией (первый где текст == surname)
