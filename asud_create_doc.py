@@ -249,45 +249,50 @@ def fill_corr_number(driver):
 
 
 def fill_corr_date(driver):
-    """Заполняет поле 'Дата у корреспондента' сегодняшней датой."""
+    """Заполняет поле 'Дата у корреспондента' сегодняшней датой.
+    Использует точный поиск по лейблу, чтобы не попасть в 'Дата помещения в архив'
+    или 'Дата регистрации'."""
     today = date.today().strftime("%d.%m.%Y")
     print(f"  Дата у корреспондента: {today}")
-    try:
-        # Ищем поле даты по лейблу
-        label = driver.find_element(By.XPATH,
-            "//*[contains(text(),'Дата у корреспондента')]")
-        parent = label.find_element(By.XPATH, "./ancestor::tr | ./ancestor::div[contains(@class,'field')]")
-        inp = parent.find_element(By.CSS_SELECTOR, "input[type='text']")
-        if inp.is_displayed():
-            inp.click()
-            time.sleep(0.3)
-            inp.clear()
-            inp.send_keys(today)
-            # Убираем фокус чтобы дата применилась
-            inp.send_keys(Keys.TAB)
-            print(f"  ОК Дата заполнена: {today}")
-            return
-    except Exception:
-        pass
 
-    # Фоллбэк: ищем input с data-marker="date" или Css3DateCell в классе
+    # Ищем лейбл с ТОЧНЫМ совпадением 'Дата у корреспондента'
+    labels = driver.find_elements(By.XPATH,
+        "//*[normalize-space(text())='Дата у корреспондента']")
+
+    inp = None
+    for label in labels:
+        try:
+            if not label.is_displayed():
+                continue
+            # Поднимаемся вверх, ищем input в том же контейнере
+            for level in range(1, 6):
+                parent = label
+                for _ in range(level):
+                    parent = parent.find_element(By.XPATH, "..")
+                inputs = parent.find_elements(By.CSS_SELECTOR, "input[type='text']")
+                visible = [i for i in inputs
+                           if i.is_displayed() and i.get_attribute("readonly") is None]
+                if visible:
+                    inp = visible[0]
+                    break
+            if inp:
+                break
+        except Exception:
+            continue
+
+    if not inp:
+        print("  !! Поле 'Дата у корреспондента' не найдено")
+        return
+
     try:
-        date_inputs = driver.find_elements(By.CSS_SELECTOR,
-            "input[id*='x-auto'][class*='DateCell']")
-        visible = [i for i in date_inputs if i.is_displayed()]
-        if visible:
-            # Берём последний видимый (дата корреспондента обычно ниже даты регистрации)
-            inp = visible[-1]
-            inp.click()
-            time.sleep(0.3)
-            inp.clear()
-            inp.send_keys(today)
-            inp.send_keys(Keys.TAB)
-            print(f"  ОК Дата заполнена (fallback): {today}")
-            return
-    except Exception:
-        pass
-    print("  !! Поле 'Дата у корреспондента' не найдено")
+        inp.click()
+        time.sleep(0.3)
+        inp.clear()
+        inp.send_keys(today)
+        inp.send_keys(Keys.TAB)
+        print(f"  ОК Дата заполнена: {today}")
+    except Exception as e:
+        print(f"  !! Ошибка заполнения даты: {e}")
 
 
 def fill_delivery_method(driver):
@@ -622,6 +627,11 @@ def create_one_document(driver, doc_data, index, total):
     # --- Номер у корреспондента ---
     print("\n  Номер:")
     fill_corr_number(driver)
+    time.sleep(0.5)
+
+    # --- Дата у корреспондента ---
+    print("\n  Дата:")
+    fill_corr_date(driver)
     time.sleep(0.5)
 
     # --- Адресат (Басманов) ---
