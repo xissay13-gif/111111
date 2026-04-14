@@ -647,13 +647,27 @@ def create_one_document(driver, doc_data, index, total):
     # ШАГ 5: Сохранение
     print("\n[5/8] Сохранение...")
     try:
-        save_btn = WebDriverWait(driver, TIMEOUT).until(
-            EC.presence_of_element_located((By.XPATH,
-                "//button[contains(text(),'Сохранить')] | //div[contains(text(),'Сохранить')]"))
-        )
-        js_click(driver, save_btn, "Сохранить")
-        time.sleep(3)
-        print(f"  ОК Документ {index}/{total} сохранён!")
+        # Сначала пытаемся по id="header-save-btn"
+        save_btn = None
+        try:
+            save_btn = WebDriverWait(driver, TIMEOUT).until(
+                EC.element_to_be_clickable((By.ID, "header-save-btn"))
+            )
+        except Exception:
+            # Фоллбэк: кнопка Сохранить в шапке по тексту
+            btns = driver.find_elements(By.XPATH,
+                "//*[normalize-space(text())='Сохранить']")
+            for b in btns:
+                if b.is_displayed():
+                    save_btn = b
+                    break
+
+        if save_btn:
+            js_click(driver, save_btn, "Сохранить")
+            time.sleep(3)
+            print(f"  ОК Документ {index}/{total} сохранён!")
+        else:
+            print("  !! Кнопка 'Сохранить' не найдена")
     except Exception as e:
         print(f"  !! Ошибка сохранения: {e}")
 
@@ -671,12 +685,21 @@ def create_one_document(driver, doc_data, index, total):
     # ШАГ 8: Сохранить после рассылки
     print("\n[8/9] Сохранение после рассылки...")
     try:
-        save_btn = WebDriverWait(driver, TIMEOUT).until(
-            EC.presence_of_element_located((By.XPATH,
-                "//div[contains(text(),'Сохранить')]"))
-        )
-        js_click(driver, save_btn, "Сохранить")
-        time.sleep(3)
+        save_btn = None
+        try:
+            save_btn = WebDriverWait(driver, TIMEOUT).until(
+                EC.element_to_be_clickable((By.ID, "header-save-btn"))
+            )
+        except Exception:
+            btns = driver.find_elements(By.XPATH,
+                "//*[normalize-space(text())='Сохранить']")
+            for b in btns:
+                if b.is_displayed():
+                    save_btn = b
+                    break
+        if save_btn:
+            js_click(driver, save_btn, "Сохранить")
+            time.sleep(3)
     except Exception:
         pass
 
