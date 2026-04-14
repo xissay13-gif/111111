@@ -240,6 +240,254 @@ def find_input_near_label(driver, label_text):
     return None
 
 
+def create_correspondent(driver, person_name):
+    """Создаёт нового корреспондента через диалоги АСУД.
+    Flow:
+      1. Клик '+' рядом с Корреспондент → 'Поиск корреспондента'
+      2. 'Добавить' → 'Редактирование организации'
+      3. В поле 'Поиск организации' ввести фамилию → выбрать из выпадающего
+      4. Клик 'Добавить' в секции 'Физические лица'
+      5. Заполнить карточку физ. лица (ФИО + Должность=ФЛ) → 'Добавить'
+      6. 'Выбрать физ. лиц' → возврат в 'Поиск корреспондента'
+      7. 'Готово'
+    """
+    parts = person_name.strip().split()
+    if len(parts) < 3:
+        print(f"  !! Для создания нужно 3 части ФИО, получено: {person_name}")
+        return
+    surname, first_name, middle_name = parts[0], parts[1], parts[2]
+    print(f"  Создаю нового корреспондента: {surname} {first_name} {middle_name}")
+
+    # ШАГ 1: Клик "+" рядом с полем Корреспондент
+    print("    [1/7] Клик '+' у Корреспондент...")
+    try:
+        # Находим лейбл Корреспондент, рядом ищем img с data-marker='select-btn'
+        plus_btn = None
+        label = driver.find_element(By.XPATH,
+            "//*[normalize-space(text())='Корреспондент']")
+        parent = label
+        for _ in range(1, 7):
+            parent = parent.find_element(By.XPATH, "..")
+            btns = parent.find_elements(By.CSS_SELECTOR,
+                "img[data-marker='select-btn'], img.gwt-Image")
+            visible = [b for b in btns if b.is_displayed()]
+            if visible:
+                plus_btn = visible[-1]
+                break
+        if not plus_btn:
+            print("    !! Кнопка '+' у Корреспондент не найдена")
+            return
+        js_click(driver, plus_btn, "+ Корреспондент")
+        time.sleep(2)
+    except Exception as e:
+        print(f"    !! Ошибка шаг 1: {e}")
+        return
+
+    # ШАГ 2: В "Поиск корреспондента" нажать "Добавить"
+    print("    [2/7] 'Добавить' в Поиске корреспондента...")
+    try:
+        add_btn = None
+        btns = driver.find_elements(By.XPATH,
+            "//*[normalize-space(text())='Добавить']")
+        for b in btns:
+            if b.is_displayed():
+                add_btn = b
+                break
+        if not add_btn:
+            print("    !! Кнопка 'Добавить' не найдена")
+            return
+        js_click(driver, add_btn, "Добавить (новый корреспондент)")
+        time.sleep(2)
+    except Exception as e:
+        print(f"    !! Ошибка шаг 2: {e}")
+        return
+
+    # ШАГ 3: В "Редактирование организации" ввести фамилию в "Поиск организации"
+    print("    [3/7] Поиск организации...")
+    try:
+        org_input = find_input_near_label(driver, "Поиск организации")
+        if not org_input:
+            # Фоллбэк: первый видимый input в диалоге
+            inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='text']")
+            for i in inputs:
+                if i.is_displayed() and i.get_attribute("readonly") is None:
+                    org_input = i
+                    break
+        if not org_input:
+            print("    !! Поле поиска организации не найдено")
+            return
+
+        org_input.click()
+        time.sleep(0.3)
+        org_input.clear()
+        for char in surname:
+            org_input.send_keys(char)
+            time.sleep(0.1)
+        time.sleep(2)
+
+        # Выбираем вариант с точной фамилией (первый где текст == surname)
+        target = None
+        candidates = driver.find_elements(By.XPATH,
+            f"//*[contains(text(),'{surname}')]")
+        for c in candidates:
+            try:
+                if not c.is_displayed() or c == org_input:
+                    continue
+                if c.tag_name.lower() == 'input':
+                    continue
+                text = c.text.strip()
+                # Берём вариант с точно одной фамилией (без "ФЛ" / "ИП" и прочего)
+                if text == surname:
+                    target = c
+                    break
+            except Exception:
+                continue
+        # Если точного нет — берём первый с фамилией
+        if not target:
+            for c in candidates:
+                try:
+                    if c.is_displayed() and c != org_input and c.tag_name.lower() != 'input':
+                        target = c
+                        break
+                except Exception:
+                    continue
+        if target:
+            driver.execute_script(
+                "arguments[0].scrollIntoView({block: 'center'});", target)
+            time.sleep(0.3)
+            ActionChains(driver).move_to_element(target).pause(0.3).click().perform()
+            time.sleep(1)
+            print(f"    ОК Организация выбрана: {target.text.strip()[:60]}")
+    except Exception as e:
+        print(f"    !! Ошибка шаг 3: {e}")
+        return
+
+    # ШАГ 4: В секции "Физические лица" нажать "Добавить"
+    print("    [4/7] 'Добавить' в Физические лица...")
+    try:
+        # Кнопка с id содержащим header-organization-dialog-add-a-user-button
+        add_user_btn = None
+        try:
+            add_user_btn = driver.find_element(By.CSS_SELECTOR,
+                "[id*='header-organization-dialog-add-a-user-button']")
+        except Exception:
+            pass
+        if not add_user_btn:
+            # Фоллбэк: ищем "Добавить" в контексте секции Физические лица
+            section = driver.find_element(By.XPATH,
+                "//*[contains(text(),'Физические лица')]")
+            parent = section
+            for _ in range(1, 6):
+                parent = parent.find_element(By.XPATH, "..")
+                btns = parent.find_elements(By.XPATH,
+                    ".//*[normalize-space(text())='Добавить']")
+                visible = [b for b in btns if b.is_displayed()]
+                if visible:
+                    add_user_btn = visible[0]
+                    break
+        if not add_user_btn:
+            print("    !! Кнопка 'Добавить' в физ.лицах не найдена")
+            return
+        js_click(driver, add_user_btn, "Добавить физ. лицо")
+        time.sleep(2)
+    except Exception as e:
+        print(f"    !! Ошибка шаг 4: {e}")
+        return
+
+    # ШАГ 5: Заполнить карточку физ. лица и нажать "Добавить"
+    print("    [5/7] Заполнение карточки физ. лица...")
+    try:
+        fields = {
+            "Фамилия": surname,
+            "Имя": first_name,
+            "Отчество": middle_name,
+            "Должность": "ФЛ",
+        }
+        for label_text, value in fields.items():
+            inp = find_input_near_label(driver, label_text)
+            if not inp:
+                print(f"    !! Поле '{label_text}' не найдено")
+                continue
+            try:
+                inp.click()
+                time.sleep(0.2)
+                inp.clear()
+                inp.send_keys(value)
+                time.sleep(0.3)
+                print(f"      ОК {label_text}: {value}")
+            except Exception as e:
+                print(f"      !! Ошибка ввода {label_text}: {e}")
+
+        # Нажимаем "Добавить" в карточке физ. лица
+        save_btn = None
+        try:
+            save_btn = driver.find_element(By.CSS_SELECTOR,
+                "[id*='Parton_person_dialog_save_button']")
+        except Exception:
+            pass
+        if not save_btn:
+            # Фоллбэк по тексту
+            btns = driver.find_elements(By.XPATH,
+                "//*[normalize-space(text())='Добавить']")
+            visible = [b for b in btns if b.is_displayed()]
+            if visible:
+                save_btn = visible[-1]
+        if save_btn:
+            js_click(driver, save_btn, "Сохранить карточку")
+            time.sleep(2)
+    except Exception as e:
+        print(f"    !! Ошибка шаг 5: {e}")
+        return
+
+    # ШАГ 6: Нажать "Выбрать физ. лиц"
+    print("    [6/7] Выбрать физ. лиц...")
+    try:
+        select_btn = None
+        try:
+            select_btn = driver.find_element(By.CSS_SELECTOR,
+                "[id*='Parton_organization_dialog_select_persons_button']")
+        except Exception:
+            pass
+        if not select_btn:
+            btns = driver.find_elements(By.XPATH,
+                "//*[contains(text(),'Выбрать физ')]")
+            visible = [b for b in btns if b.is_displayed()]
+            if visible:
+                select_btn = visible[0]
+        if select_btn:
+            js_click(driver, select_btn, "Выбрать физ. лиц")
+            time.sleep(2)
+        else:
+            print("    !! Кнопка 'Выбрать физ. лиц' не найдена")
+            return
+    except Exception as e:
+        print(f"    !! Ошибка шаг 6: {e}")
+        return
+
+    # ШАГ 7: Нажать "Готово" в "Поиск корреспондента"
+    print("    [7/7] Готово...")
+    try:
+        done_btn = None
+        try:
+            done_btn = driver.find_element(By.ID, "oshs-select-button")
+        except Exception:
+            pass
+        if not done_btn:
+            btns = driver.find_elements(By.XPATH,
+                "//*[normalize-space(text())='Готово']")
+            visible = [b for b in btns if b.is_displayed()]
+            if visible:
+                done_btn = visible[0]
+        if done_btn:
+            js_click(driver, done_btn, "Готово")
+            time.sleep(2)
+            print(f"  ОК Корреспондент создан: {person_name}")
+        else:
+            print("    !! Кнопка 'Готово' не найдена")
+    except Exception as e:
+        print(f"    !! Ошибка шаг 7: {e}")
+
+
 def fill_correspondent(driver, person_name):
     """Заполняет поле Корреспондент через combobox."""
     print(f"  Корреспондент: {person_name}")
@@ -301,24 +549,29 @@ def fill_correspondent(driver, person_name):
         except Exception:
             continue
 
-    if not target and all_results:
-        target = all_results[0]
-        print(f"  ! По инициалам '{initials}' не нашли, беру первого: {target.text.strip()[:80]}")
+    if target:
+        # Клик через ActionChains (как в Служебной записке — это работало)
+        try:
+            driver.execute_script(
+                "arguments[0].scrollIntoView({block: 'center'});", target)
+            time.sleep(0.3)
+            ActionChains(driver).move_to_element(target).pause(0.3).click().perform()
+            time.sleep(1)
+            print(f"  ОК Корреспондент выбран: {person_name}")
+            return
+        except Exception as e:
+            print(f"  !! Ошибка выбора корреспондента: {e}")
+            return
 
-    if not target:
-        print(f"  !! Корреспондент не найден: {person_name}")
-        return
-
-    # Клик через ActionChains (как в Служебной записке — это работало)
+    # Нет точного совпадения по инициалам — создаём нового корреспондента
+    print(f"  По инициалам '{initials}' совпадений нет — создаю нового корреспондента")
+    # Закрываем dropdown (если открыт) через Escape
     try:
-        driver.execute_script(
-            "arguments[0].scrollIntoView({block: 'center'});", target)
-        time.sleep(0.3)
-        ActionChains(driver).move_to_element(target).pause(0.3).click().perform()
-        time.sleep(1)
-        print(f"  ОК Корреспондент выбран: {person_name}")
-    except Exception as e:
-        print(f"  !! Ошибка выбора корреспондента: {e}")
+        corr_input.send_keys(Keys.ESCAPE)
+        time.sleep(0.5)
+    except Exception:
+        pass
+    create_correspondent(driver, person_name)
 
 
 def fill_corr_number(driver):
