@@ -67,10 +67,57 @@ def load_excel(file_path):
 
 
 def js_click(driver, element, description=""):
-    """Кликает через JavaScript — надёжнее для GWT-элементов."""
-    driver.execute_script("arguments[0].click();", element)
-    print(f"  ОК JS-клик: {description}")
-    time.sleep(0.5)
+    """Надёжный клик с fallback'ами для GWT/GXT-элементов."""
+    # Прокручиваем к элементу
+    try:
+        driver.execute_script(
+            "arguments[0].scrollIntoView({block: 'center', inline: 'center'});", element)
+        time.sleep(0.2)
+    except Exception:
+        pass
+
+    # Способ 1: ActionChains — имитирует реальную мышь с hover (лучше всего для GXT dropdown)
+    try:
+        from selenium.webdriver.common.action_chains import ActionChains as AC
+        AC(driver).move_to_element(element).pause(0.2).click().perform()
+        print(f"  ОК клик (mouse): {description}")
+        time.sleep(0.5)
+        return
+    except Exception:
+        pass
+
+    # Способ 2: обычный Selenium click
+    try:
+        element.click()
+        print(f"  ОК клик: {description}")
+        time.sleep(0.5)
+        return
+    except Exception:
+        pass
+
+    # Способ 3: JS .click()
+    try:
+        driver.execute_script("arguments[0].click();", element)
+        print(f"  ОК JS-клик: {description}")
+        time.sleep(0.5)
+        return
+    except Exception:
+        pass
+
+    # Способ 4: полный набор mouse-событий (для самых упрямых GWT)
+    try:
+        driver.execute_script("""
+            var el = arguments[0];
+            var events = ['mouseover', 'mousedown', 'mouseup', 'click'];
+            events.forEach(function(type) {
+                var evt = new MouseEvent(type, {bubbles: true, cancelable: true, view: window});
+                el.dispatchEvent(evt);
+            });
+        """, element)
+        print(f"  ОК mouse-events: {description}")
+        time.sleep(0.5)
+    except Exception as e:
+        print(f"  !! Клик не удался: {description}: {e}")
 
 
 def wait_asud_loaded(driver, max_wait=120):
