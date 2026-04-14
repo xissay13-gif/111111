@@ -311,42 +311,37 @@ def fill_correspondent(driver, person_name):
 def fill_corr_number(driver):
     """Заполняет поле 'Номер у корреспондента' значением 'б/н'."""
     print("  Номер у корреспондента: б/н")
-    try:
-        # Ищем поле по лейблу
-        label = driver.find_element(By.XPATH,
-            "//*[contains(text(),'Номер у корреспондента')]")
-        parent = label.find_element(By.XPATH, "./ancestor::tr | ./ancestor::div[contains(@class,'field')]")
-        inp = parent.find_element(By.CSS_SELECTOR, "input[type='text']")
-        if inp.is_displayed():
-            inp.click()
-            time.sleep(0.3)
-            inp.clear()
-            inp.send_keys("б/н")
-            print("  ОК Номер заполнен")
-            return
-    except Exception:
-        pass
 
-    # Фоллбэк: ищем все видимые input'ы и берём тот что рядом с "Номер у корреспондента"
+    inp = find_input_near_label(driver, "Номер у корреспондента")
+
+    if not inp:
+        print("  !! Поле 'Номер у корреспондента' не найдено")
+        return
+
     try:
-        inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='text']")
-        visible = [i for i in inputs if i.is_displayed()]
-        for inp in visible:
-            try:
-                # Проверяем, есть ли рядом текст "Номер у корреспондента"
-                parent_html = inp.find_element(By.XPATH, "./ancestor::tr").get_attribute("innerHTML")
-                if "Номер у корреспондента" in parent_html:
-                    inp.click()
-                    time.sleep(0.3)
-                    inp.clear()
-                    inp.send_keys("б/н")
-                    print("  ОК Номер заполнен (fallback)")
-                    return
-            except Exception:
-                continue
-    except Exception:
-        pass
-    print("  !! Поле 'Номер у корреспондента' не найдено")
+        driver.execute_script(
+            "arguments[0].scrollIntoView({block: 'center'});", inp)
+        time.sleep(0.3)
+        inp.click()
+        time.sleep(0.3)
+        inp.clear()
+        time.sleep(0.2)
+        inp.send_keys("б/н")
+        time.sleep(0.3)
+        inp.send_keys(Keys.TAB)
+        print("  ОК Номер заполнен")
+    except Exception as e:
+        # Fallback через JS
+        try:
+            driver.execute_script("""
+                arguments[0].value = 'б/н';
+                arguments[0].dispatchEvent(new Event('input', {bubbles: true}));
+                arguments[0].dispatchEvent(new Event('change', {bubbles: true}));
+                arguments[0].dispatchEvent(new Event('blur', {bubbles: true}));
+            """, inp)
+            print("  ОК Номер заполнен через JS")
+        except Exception as e2:
+            print(f"  !! Ошибка заполнения номера: {e2}")
 
 
 def fill_corr_date(driver):
