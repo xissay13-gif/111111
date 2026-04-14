@@ -119,34 +119,37 @@ def match_correspondent(text, full_name):
     return False
 
 
+def find_input_near_label(driver, label_text):
+    """Находит input combobox в той же tr/контейнере что и лейбл."""
+    labels = driver.find_elements(By.XPATH,
+        f"//*[normalize-space(text())='{label_text}']")
+    for label in labels:
+        try:
+            if not label.is_displayed():
+                continue
+            # Поднимаемся вверх ища контейнер с input
+            for level in range(1, 6):
+                parent = label
+                for _ in range(level):
+                    parent = parent.find_element(By.XPATH, "..")
+                inputs = parent.find_elements(By.CSS_SELECTOR,
+                    "input[id*='select_combobox-input'], input[type='text']")
+                visible = [i for i in inputs
+                           if i.is_displayed() and i.get_attribute("readonly") is None]
+                if visible:
+                    return visible[0]
+        except Exception:
+            continue
+    return None
+
+
 def fill_correspondent(driver, person_name):
     """Заполняет поле Корреспондент через combobox."""
     print(f"  Корреспондент: {person_name}")
     time.sleep(1)
 
-    # Ищем поле корреспондента по CSS-селектору combobox
-    corr_input = None
-    try:
-        inputs = driver.find_elements(By.CSS_SELECTOR, "input[id*='select_combobox-input']")
-        visible = [i for i in inputs if i.is_displayed()]
-        if visible:
-            corr_input = visible[0]
-    except Exception:
-        pass
-
-    if not corr_input:
-        try:
-            labels = driver.find_elements(By.XPATH,
-                "//*[contains(text(),'Корреспондент')]")
-            for label in labels:
-                if label.is_displayed():
-                    parent = label.find_element(By.XPATH, "./ancestor::tr")
-                    inp = parent.find_element(By.CSS_SELECTOR, "input[type='text']")
-                    if inp.is_displayed():
-                        corr_input = inp
-                        break
-        except Exception:
-            pass
+    # Ищем поле строго рядом с лейблом "Корреспондент" (не "Номер у корреспондента"!)
+    corr_input = find_input_near_label(driver, "Корреспондент")
 
     if not corr_input:
         print("  !! Поле корреспондента не найдено!")
@@ -157,41 +160,49 @@ def fill_correspondent(driver, person_name):
     corr_input.click()
     time.sleep(0.3)
     corr_input.clear()
-    corr_input.send_keys(surname)
+    time.sleep(0.3)
+    for char in surname:
+        corr_input.send_keys(char)
+        time.sleep(0.1)
     print(f"  ОК Введена фамилия: {surname}")
     time.sleep(2)
 
-    # Ждём выпадающий список и ищем совпадение по инициалам
-    try:
+    # Сначала пробуем найти совпадение по инициалам в выпадающем списке
+    initials = fio_to_initials(person_name)
+    print(f"  Ищу совпадение по инициалам: {initials}")
+
+    def find_matching_result():
         results = driver.find_elements(By.XPATH,
             f"//*[contains(text(),'{surname}')]")
-        visible_results = [r for r in results if r.is_displayed() and r != corr_input]
-        if visible_results:
-            # Сначала ищем точное совпадение по инициалам
-            for r in visible_results:
+        candidates = []
+        for r in results:
+            try:
+                if not r.is_displayed() or r == corr_input:
+                    continue
+                if r.tag_name.lower() == 'input':
+                    continue
                 if match_correspondent(r.text, person_name):
-                    js_click(driver, r, f"Vybor: {r.text.strip()}")
-                    time.sleep(1)
-                    return
-            # Если точного нет — берём первый с фамилией
-            js_click(driver, visible_results[0], f"Vybor (pervyj): {visible_results[0].text.strip()}")
-            time.sleep(1)
-        else:
-            corr_input.send_keys(Keys.ENTER)
-            time.sleep(2)
-            results = driver.find_elements(By.XPATH,
-                f"//*[contains(text(),'{surname}')]")
-            visible_results = [r for r in results if r.is_displayed() and r != corr_input]
-            if visible_results:
-                for r in visible_results:
-                    if match_correspondent(r.text, person_name):
-                        js_click(driver, r, f"Vybor: {r.text.strip()}")
-                        time.sleep(1)
-                        return
-                js_click(driver, visible_results[0], f"Vybor (pervyj): {visible_results[0].text.strip()}")
-                time.sleep(1)
-            else:
-                print(f"  !! Корреспондент не найден: {person_name}")
+                    candidates.append(r)
+            except Exception:
+                continue
+        return candidates
+
+    candidates = find_matching_result()
+    if not candidates:
+        # Жмём Enter — возможно нужно явно запустить поиск
+        corr_input.send_keys(Keys.ENTER)
+        time.sleep(2)
+        candidates = find_matching_result()
+
+    if candidates:
+        # Берём наименьший по размеру (это обычно сама строка результата, не контейнер)
+        best = min(candidates, key=lambda e: len(e.text))
+        js_click(driver, best, f"Выбор: {best.text.strip()[:60]}")
+        time.sleep(1)
+        print(f"  ОК Корреспондент выбран: {person_name}")
+    else:
+        print(f"  !! НЕТ совпадения по инициалам '{initials}' для: {person_name}")
+        print(f"     (выбор первого попавшегося отключён, чтобы не выбрать однофамильца)")
     except Exception as e:
         print(f"  !! Ошибка выбора корреспондента: {e}")
 
@@ -419,24 +430,7 @@ def add_addressee(driver, person_name):
     """Добавляет адресата через combobox рядом с разделом 'Адресаты'."""
     print(f"  Адресат: {person_name}")
     try:
-        # Находим лейбл "Адресаты" и combobox-поле в его контейнере
-        section = driver.find_element(By.XPATH,
-            "//*[contains(text(),'Адресаты') and not(contains(text(),'Добавить'))]")
-
-        addr_input = None
-        parent = section
-        for _ in range(1, 8):
-            try:
-                parent = parent.find_element(By.XPATH, "..")
-                inputs = parent.find_elements(By.CSS_SELECTOR,
-                    "input[id*='select_combobox-input'], input[type='text']")
-                visible = [i for i in inputs
-                           if i.is_displayed() and i.get_attribute("readonly") is None]
-                if visible:
-                    addr_input = visible[0]
-                    break
-            except Exception:
-                continue
+        addr_input = find_input_near_label(driver, "Адресаты")
 
         if not addr_input:
             print("  !! Поле адресата не найдено")
@@ -453,45 +447,37 @@ def add_addressee(driver, person_name):
         print(f"  ОК Введена фамилия: {surname}")
         time.sleep(2)
 
-        # Ищем в выпадающем списке
-        results = driver.find_elements(By.XPATH,
-            f"//*[contains(text(),'{surname}')]")
-        visible_results = [r for r in results if r.is_displayed() and r != addr_input]
+        initials = fio_to_initials(person_name)
 
-        if not visible_results:
-            addr_input.send_keys(Keys.ENTER)
-            time.sleep(2)
+        def find_matching():
             results = driver.find_elements(By.XPATH,
                 f"//*[contains(text(),'{surname}')]")
-            visible_results = [r for r in results if r.is_displayed() and r != addr_input]
-
-        for r in visible_results:
-            try:
-                tag = r.tag_name.lower()
-                if tag == 'input':
+            cands = []
+            for r in results:
+                try:
+                    if not r.is_displayed() or r == addr_input:
+                        continue
+                    if r.tag_name.lower() == 'input':
+                        continue
+                    if match_correspondent(r.text, person_name):
+                        cands.append(r)
+                except Exception:
                     continue
-                if match_correspondent(r.text, person_name):
-                    js_click(driver, r, f"Vybor: {r.text.strip()}")
-                    time.sleep(1)
-                    print(f"  ОК Адресат добавлен: {person_name}")
-                    return
-            except Exception:
-                continue
+            return cands
 
-        # Если по инициалам не нашли — берём первый подходящий
-        for r in visible_results:
-            try:
-                if r.tag_name.lower() == 'input':
-                    continue
-                if r.is_displayed():
-                    js_click(driver, r, f"Vybor (pervyj): {r.text.strip()}")
-                    time.sleep(1)
-                    print(f"  ОК Адресат добавлен: {person_name}")
-                    return
-            except Exception:
-                continue
+        candidates = find_matching()
+        if not candidates:
+            addr_input.send_keys(Keys.ENTER)
+            time.sleep(2)
+            candidates = find_matching()
 
-        print(f"  !! Адресат не найден в списке: {person_name}")
+        if candidates:
+            best = min(candidates, key=lambda e: len(e.text))
+            js_click(driver, best, f"Выбор: {best.text.strip()[:60]}")
+            time.sleep(1)
+            print(f"  ОК Адресат добавлен: {person_name}")
+        else:
+            print(f"  !! Адресат не найден по инициалам '{initials}': {person_name}")
     except Exception as e:
         print(f"  !! Ошибка добавления адресата: {e}")
 
@@ -636,11 +622,6 @@ def create_one_document(driver, doc_data, index, total):
     # --- Номер у корреспондента ---
     print("\n  Номер:")
     fill_corr_number(driver)
-    time.sleep(0.5)
-
-    # --- Дата у корреспондента ---
-    print("\n  Дата:")
-    fill_corr_date(driver)
     time.sleep(0.5)
 
     # --- Адресат (Басманов) ---
