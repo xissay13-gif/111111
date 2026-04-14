@@ -18,7 +18,7 @@ jobs:
         python-version: '3.12'
 
     - name: Install dependencies
-      run: pip install selenium openpyxl pyinstaller pyautogui
+      run: pip install selenium openpyxl pyinstaller pyautogui pywinauto
 
     - name: Build EXE
       run: >
@@ -31,6 +31,7 @@ jobs:
         --hidden-import=selenium.webdriver.support.expected_conditions
         --hidden-import=openpyxl
         --hidden-import=pyautogui
+        --hidden-import=pywinauto
         asud_create_doc.py
 
     - name: Upload EXE

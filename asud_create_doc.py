@@ -22,6 +22,13 @@ try:
     PYAUTOGUI_AVAILABLE = True
 except ImportError:
     PYAUTOGUI_AVAILABLE = False
+
+try:
+    from pywinauto.application import Application
+    from pywinauto import timings
+    PYWINAUTO_AVAILABLE = True
+except ImportError:
+    PYWINAUTO_AVAILABLE = False
 from selenium import webdriver
 from selenium.webdriver.edge.service import Service as EdgeService
 from selenium.webdriver.edge.options import Options as EdgeOptions
@@ -625,10 +632,10 @@ def attach_content(driver, file_path):
             print(f"  ! Не удалось через input: {e}")
 
     # Стратегия 2: кликаем кнопку — открывается нативный Explorer,
-    # pyautogui печатает путь + Enter
+    # pywinauto находит окно по заголовку и шлёт клавиши именно ему
     if not file_attached:
-        if not PYAUTOGUI_AVAILABLE:
-            print("  !! pyautogui не установлен — пропускаю прикрепление")
+        if not PYWINAUTO_AVAILABLE:
+            print("  !! pywinauto не установлен — пропускаю прикрепление")
             return
 
         try:
@@ -641,37 +648,51 @@ def attach_content(driver, file_path):
             print(f"  !! Кнопка 'Присоединить содержимое' не найдена: {e}")
             return
 
-        # Ждём пока откроется Explorer
-        print("  Жду открытия нативного Explorer (3 сек)...")
-        time.sleep(3)
+        print("  Жду открытия нативного Explorer...")
+        time.sleep(2)
 
+        # Подключаемся к окну Explorer — это может быть "Открыть", "Open",
+        # "Выбор файла" и т.п. Пробуем несколько вариантов заголовков.
         try:
-            # Печатаем полный путь к файлу в поле имени файла
-            print(f"  Печатаю путь через pyautogui...")
-            # Используем pyperclip-подход: копируем в буфер и Ctrl+V (надёжнее typewrite)
-            # т.к. typewrite не поддерживает кириллицу
-            import subprocess
-            # Кладём путь в буфер обмена через PowerShell (без доп. зависимостей)
-            subprocess.run(
-                ['powershell', '-command',
-                 f'Set-Clipboard -Value "{file_path}"'],
-                check=False, capture_output=True
-            )
+            app = None
+            for title_re in [".*Открыт.*", ".*Open.*", ".*Выбор.*", ".*Choose.*"]:
+                try:
+                    app = Application(backend='win32').connect(
+                        title_re=title_re, timeout=10
+                    )
+                    print(f"  Найдено окно по шаблону: {title_re}")
+                    break
+                except Exception:
+                    continue
+
+            if not app:
+                print("  !! Окно Explorer не найдено — закрываю через Escape")
+                if PYAUTOGUI_AVAILABLE:
+                    pyautogui.press('escape')
+                return
+
+            dlg = app.top_window()
+            # Делаем окно активным, чтобы ввод пошёл в него
+            dlg.set_focus()
             time.sleep(0.5)
-            pyautogui.hotkey('ctrl', 'v')
+
+            # Набираем путь к файлу через type_keys (поддерживает кириллицу
+            # если указать with_spaces=True)
+            dlg.type_keys(file_path, with_spaces=True, pause=0.02)
             time.sleep(0.5)
-            pyautogui.press('enter')
+            dlg.type_keys("{ENTER}")
             time.sleep(2)
             print(f"  ОК Файл выбран через Explorer: {os.path.basename(file_path)}")
             file_attached = True
         except Exception as e:
-            print(f"  !! Ошибка pyautogui: {e}")
-            # Пробуем закрыть Explorer
-            try:
-                pyautogui.press('escape')
-                time.sleep(1)
-            except Exception:
-                pass
+            print(f"  !! Ошибка pywinauto: {e}")
+            # Пробуем закрыть Explorer через pyautogui
+            if PYAUTOGUI_AVAILABLE:
+                try:
+                    pyautogui.press('escape')
+                    time.sleep(1)
+                except Exception:
+                    pass
             return
 
     if not file_attached:
