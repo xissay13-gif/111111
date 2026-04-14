@@ -1017,9 +1017,15 @@ def create_one_document(driver, doc_data, index, total):
     except Exception:
         pass
 
-    # ШАГ 9: Зарегистрировать
-    if AUTO_REGISTER:
-        print("\n[9/9] Регистрация...")
+    # ШАГ 9: Зарегистрировать — спрашиваем у пользователя
+    print(f"\n[9/9] Документ {index}/{total} готов.")
+    print(f"  Содержание: {doc_data['содержание'][:60]}...")
+    print(f"  Корреспондент: {doc_data['корреспондент']}")
+    print()
+    answer = input("  Зарегистрировать документ и перейти к следующему? (да/нет/пропустить): ").strip().lower()
+
+    if answer in ("да", "д", "y", "yes", "да.", ""):
+        print("  Регистрирую...")
         try:
             reg_btn = WebDriverWait(driver, TIMEOUT).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR,
@@ -1037,8 +1043,12 @@ def create_one_document(driver, doc_data, index, total):
                 print(f"  ОК Документ {index}/{total} ЗАРЕГИСТРИРОВАН!")
             except Exception as e:
                 print(f"  !! Кнопка 'Зарегистрировать' не найдена: {e}")
+    elif answer in ("пропустить", "skip", "п"):
+        print(f"  Документ {index}/{total} пропущен — переходим к следующему без регистрации")
     else:
-        print(f"\n[9/9] Документ {index}/{total} готов (без регистрации)")
+        # "нет" — останавливаемся, даём пользователю поработать руками
+        print(f"  Документ {index}/{total} оставлен на регистрацию вручную.")
+        input("  Когда закончите с этим документом — нажмите Enter для перехода к следующему...")
 
     # Возвращаемся на главную для следующего документа
     time.sleep(2)
