@@ -1,5 +1,12 @@
 """
-Скрипт для создания Исходящего документа / Служебная записка в АСУД ИК
+Скрипт для пакетного создания Входящих документов в АСУД ИК
+из Excel-файла (колонка B — краткое содержание, колонка C — корреспондент).
+
+Установка:
+    pip install selenium openpyxl pyinstaller
+
+Сборка exe:
+    pyinstaller --onefile --name asud_create_doc asud_create_doc.py
 
 Положи msedgedriver.exe рядом с exe/скриптом.
 """
@@ -7,6 +14,8 @@
 import time
 import sys
 import os
+from datetime import date
+import openpyxl
 from selenium import webdriver
 from selenium.webdriver.edge.service import Service as EdgeService
 from selenium.webdriver.edge.options import Options as EdgeOptions
@@ -19,21 +28,8 @@ from selenium.webdriver.common.action_chains import ActionChains
 
 # ===== НАСТРОЙКИ =====
 ASUD_URL = "https://asud.interrao.ru/asudik/"
-
-DOC_DATA = {
-    "краткое_содержание": "О возврате денежных средств в размере",
-    "адресаты": [
-        "Басманов Александр Владимирович",
-        "Халецкая Юлия Владимировна",
-    ],
-    "подписанты": [
-        "Матус Елена Анатольевна",
-    ],
-    "проект": "00-",
-}
-
 TIMEOUT = 20
-PAUSE = 3  # пауза между действиями (сек)
+AUTO_REGISTER = False  # True — регистрирует автоматически, False — останавливается перед регистрацией
 
 
 def get_driver_path():
@@ -41,155 +37,695 @@ def get_driver_path():
         base_dir = os.path.dirname(sys.executable)
     else:
         base_dir = os.path.dirname(os.path.abspath(__file__))
+
     driver_path = os.path.join(base_dir, "msedgedriver.exe")
+
     if not os.path.exists(driver_path):
-        print(f"!! msedgedriver.exe не найден в: {base_dir}")
-        input("Enter...")
+        print(f"!! msedgedriver.exe ne najden v papke: {base_dir}")
+        print("   Polozhi msedgedriver.exe ryadom s etim fajlom.")
+        input("Enter dlya vyhoda...")
         sys.exit(1)
+
     return driver_path
 
 
-def safe_click(driver, element, description=""):
-    """Несколько способов клика — от надёжного к запасному."""
-    print(f"  -> Клик: {description}")
+def load_excel(file_path):
+    """Читает Excel и возвращает список словарей {содержание, корреспондент}."""
+    wb = openpyxl.load_workbook(file_path, data_only=True)
+    ws = wb.active
+    rows = []
+    for row in ws.iter_rows(min_row=2, max_row=ws.max_row, values_only=True):
+        content = row[1]  # колонка B
+        correspondent = row[2]  # колонка C
+        if content and correspondent:
+            rows.append({
+                "содержание": str(content).strip(),
+                "корреспондент": str(correspondent).strip(),
+            })
+    wb.close()
+    return rows
 
-    # Прокручиваем к элементу
-    try:
-        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", element)
-        time.sleep(0.5)
-    except Exception:
-        pass
 
-    # Способ 1: ActionChains (лучше всего для GWT/GXT)
-    try:
-        ActionChains(driver).move_to_element(element).pause(0.5).click().perform()
-        print(f"  ОК (ActionChains): {description}")
-        time.sleep(0.5)
-        return
-    except Exception:
-        pass
-
-    # Способ 2: Обычный клик
-    try:
-        element.click()
-        print(f"  ОК (click): {description}")
-        time.sleep(0.5)
-        return
-    except Exception:
-        pass
-
-    # Способ 3: JavaScript .click()
-    try:
-        driver.execute_script("arguments[0].click();", element)
-        print(f"  ОК (JS click): {description}")
-        time.sleep(0.5)
-        return
-    except Exception:
-        pass
-
-    # Способ 4: JavaScript dispatchEvent (запасной)
-    try:
-        driver.execute_script("""
-            var evt = new MouseEvent('click', {
-                bubbles: true, cancelable: true, view: window
-            });
-            arguments[0].dispatchEvent(evt);
-        """, element)
-        print(f"  ОК (JS dispatchEvent): {description}")
-        time.sleep(0.5)
-    except Exception as e:
-        print(f"  !! Все способы клика не сработали: {e}")
+def js_click(driver, element, description=""):
+    """Кликает через JavaScript — надёжнее для GWT-элементов."""
+    driver.execute_script("arguments[0].click();", element)
+    print(f"  OK JS-klik: {description}")
+    time.sleep(0.5)
 
 
 def wait_and_click(driver, by, selector, description="", timeout=TIMEOUT):
-    print(f"  -> Ожидаю: {description or selector}")
+    print(f"  -> Ozhidayu: {description or selector}")
     el = WebDriverWait(driver, timeout).until(
-        EC.element_to_be_clickable((by, selector))
+        EC.presence_of_element_located((by, selector))
     )
-    time.sleep(PAUSE)
-    safe_click(driver, el, description or selector)
-    time.sleep(PAUSE)
+    time.sleep(0.5)
+    try:
+        el.click()
+    except Exception:
+        driver.execute_script("arguments[0].click();", el)
+    print(f"  OK Klik: {description or selector}")
+    time.sleep(0.5)
     return el
 
 
-def find_section_input(driver, section_label):
-    """Находит input-поле combobox рядом с указанной секцией."""
-    # Находим лейбл секции
+def fio_to_initials(full_name):
+    """Преобразует 'Калганова Тамара Алексеевна' -> 'Калганова Т А'
+    для сопоставления с тем, что показывает АСУД."""
+    parts = full_name.strip().split()
+    if len(parts) >= 3:
+        return f"{parts[0]} {parts[1][0]} {parts[2][0]}"
+    elif len(parts) == 2:
+        return f"{parts[0]} {parts[1][0]}"
+    return parts[0] if parts else full_name
+
+
+def match_correspondent(text, full_name):
+    """Проверяет совпадение: текст из АСУД (инициалы) vs полное ФИО из Excel."""
+    text_clean = text.strip()
+    # Прямое совпадение по полному ФИО
+    if full_name in text_clean:
+        return True
+    # Совпадение по инициалам: "Калганова Т А" или "Калганова Т.А." и т.п.
+    initials = fio_to_initials(full_name)
+    # Убираем точки для сравнения
+    text_norm = text_clean.replace('.', '').replace(',', '')
+    initials_norm = initials.replace('.', '').replace(',', '')
+    if initials_norm.lower() in text_norm.lower():
+        return True
+    # Совпадение только по фамилии (фоллбэк)
+    surname = full_name.split()[0]
+    if text_clean.lower().startswith(surname.lower()):
+        return True
+    return False
+
+
+def fill_correspondent(driver, person_name):
+    """Заполняет поле Корреспондент через combobox."""
+    print(f"  Korrespondent: {person_name}")
+    time.sleep(1)
+
+    # Ищем поле корреспондента по CSS-селектору combobox
+    corr_input = None
     try:
-        section = driver.find_element(By.XPATH,
-            f"//*[contains(text(),'{section_label}')]")
+        inputs = driver.find_elements(By.CSS_SELECTOR, "input[id*='select_combobox-input']")
+        visible = [i for i in inputs if i.is_displayed()]
+        if visible:
+            corr_input = visible[0]
     except Exception:
-        print(f"  !! Секция '{section_label}' не найдена")
-        return None
+        pass
 
-    # Ищем input внутри родительских контейнеров
-    for level in range(1, 8):
+    if not corr_input:
         try:
-            parent = section
-            for _ in range(level):
-                parent = parent.find_element(By.XPATH, "..")
-            inputs = parent.find_elements(By.CSS_SELECTOR,
-                "input[type='text']")
-            visible = [i for i in inputs if i.is_displayed() and i.get_attribute("readonly") is None]
-            if visible:
-                return visible[0]
+            labels = driver.find_elements(By.XPATH,
+                "//*[contains(text(),'Корреспондент')]")
+            for label in labels:
+                if label.is_displayed():
+                    parent = label.find_element(By.XPATH, "./ancestor::tr")
+                    inp = parent.find_element(By.CSS_SELECTOR, "input[type='text']")
+                    if inp.is_displayed():
+                        corr_input = inp
+                        break
         except Exception:
-            continue
-    return None
+            pass
 
-
-def add_person_to_combobox(driver, section_label, person_name):
-    """Добавляет человека через combobox в указанной секции."""
-    print(f"\n  Добавляю в '{section_label}': {person_name}")
-    surname = person_name.split()[0]
-
-    input_field = find_section_input(driver, section_label)
-    if not input_field:
-        print(f"  !! Поле ввода не найдено для '{section_label}'")
+    if not corr_input:
+        print("  !! Pole korrespondenta ne najdeno!")
         return
 
-    # Кликаем на поле и вводим фамилию
-    safe_click(driver, input_field, f"Поле '{section_label}'")
-    time.sleep(1)
-    input_field.clear()
-    input_field.send_keys(surname)
-    print(f"  Ввожу фамилию: {surname}")
-    time.sleep(PAUSE)
+    # Вводим фамилию для поиска
+    surname = person_name.split()[0]
+    corr_input.click()
+    time.sleep(0.3)
+    corr_input.clear()
+    corr_input.send_keys(surname)
+    print(f"  OK Vvedena familiya: {surname}")
+    time.sleep(2)
 
-    # Ждём выпадающий список и выбираем
+    # Ждём выпадающий список и ищем совпадение по инициалам
     try:
-        options = driver.find_elements(By.XPATH,
+        results = driver.find_elements(By.XPATH,
             f"//*[contains(text(),'{surname}')]")
-        for opt in options:
+        visible_results = [r for r in results if r.is_displayed() and r != corr_input]
+        if visible_results:
+            # Сначала ищем точное совпадение по инициалам
+            for r in visible_results:
+                if match_correspondent(r.text, person_name):
+                    js_click(driver, r, f"Vybor: {r.text.strip()}")
+                    time.sleep(1)
+                    return
+            # Если точного нет — берём первый с фамилией
+            js_click(driver, visible_results[0], f"Vybor (pervyj): {visible_results[0].text.strip()}")
+            time.sleep(1)
+        else:
+            corr_input.send_keys(Keys.ENTER)
+            time.sleep(2)
+            results = driver.find_elements(By.XPATH,
+                f"//*[contains(text(),'{surname}')]")
+            visible_results = [r for r in results if r.is_displayed() and r != corr_input]
+            if visible_results:
+                for r in visible_results:
+                    if match_correspondent(r.text, person_name):
+                        js_click(driver, r, f"Vybor: {r.text.strip()}")
+                        time.sleep(1)
+                        return
+                js_click(driver, visible_results[0], f"Vybor (pervyj): {visible_results[0].text.strip()}")
+                time.sleep(1)
+            else:
+                print(f"  !! Korrespondent ne najden: {person_name}")
+    except Exception as e:
+        print(f"  !! Oshibka vybora korrespondenta: {e}")
+
+
+def fill_corr_number(driver):
+    """Заполняет поле 'Номер у корреспондента' значением 'б/н'."""
+    print("  Nomer u korrespondenta: b/n")
+    try:
+        # Ищем поле по лейблу
+        label = driver.find_element(By.XPATH,
+            "//*[contains(text(),'Номер у корреспондента')]")
+        parent = label.find_element(By.XPATH, "./ancestor::tr | ./ancestor::div[contains(@class,'field')]")
+        inp = parent.find_element(By.CSS_SELECTOR, "input[type='text']")
+        if inp.is_displayed():
+            inp.click()
+            time.sleep(0.3)
+            inp.clear()
+            inp.send_keys("б/н")
+            print("  OK Nomer zapolnen")
+            return
+    except Exception:
+        pass
+
+    # Фоллбэк: ищем все видимые input'ы и берём тот что рядом с "Номер у корреспондента"
+    try:
+        inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='text']")
+        visible = [i for i in inputs if i.is_displayed()]
+        for inp in visible:
             try:
-                if opt == input_field:
-                    continue
-                if not opt.is_displayed():
-                    continue
-                # Пропускаем сам лейбл секции
-                tag = opt.tag_name.lower()
-                if tag in ('label', 'span', 'td') and opt.text.strip() == section_label:
-                    continue
-                safe_click(driver, opt, f"Выбор: {person_name}")
-                print(f"  ОК Выбран: {person_name}")
-                time.sleep(PAUSE)
-                return
+                # Проверяем, есть ли рядом текст "Номер у корреспондента"
+                parent_html = inp.find_element(By.XPATH, "./ancestor::tr").get_attribute("innerHTML")
+                if "Номер у корреспондента" in parent_html:
+                    inp.click()
+                    time.sleep(0.3)
+                    inp.clear()
+                    inp.send_keys("б/н")
+                    print("  OK Nomer zapolnen (fallback)")
+                    return
             except Exception:
                 continue
     except Exception:
         pass
+    print("  !! Pole 'Nomer u korrespondenta' ne najdeno")
 
-    # Если выпадающий список не появился — Enter
-    print(f"  Выпадающий список не найден, пробую Enter...")
-    input_field.send_keys(Keys.ENTER)
-    time.sleep(PAUSE)
+
+def fill_corr_date(driver):
+    """Заполняет поле 'Дата у корреспондента' сегодняшней датой."""
+    today = date.today().strftime("%d.%m.%Y")
+    print(f"  Data u korrespondenta: {today}")
+    try:
+        # Ищем поле даты по лейблу
+        label = driver.find_element(By.XPATH,
+            "//*[contains(text(),'Дата у корреспондента')]")
+        parent = label.find_element(By.XPATH, "./ancestor::tr | ./ancestor::div[contains(@class,'field')]")
+        inp = parent.find_element(By.CSS_SELECTOR, "input[type='text']")
+        if inp.is_displayed():
+            inp.click()
+            time.sleep(0.3)
+            inp.clear()
+            inp.send_keys(today)
+            # Убираем фокус чтобы дата применилась
+            inp.send_keys(Keys.TAB)
+            print(f"  OK Data zapolnena: {today}")
+            return
+    except Exception:
+        pass
+
+    # Фоллбэк: ищем input с data-marker="date" или Css3DateCell в классе
+    try:
+        date_inputs = driver.find_elements(By.CSS_SELECTOR,
+            "input[id*='x-auto'][class*='DateCell']")
+        visible = [i for i in date_inputs if i.is_displayed()]
+        if visible:
+            # Берём последний видимый (дата корреспондента обычно ниже даты регистрации)
+            inp = visible[-1]
+            inp.click()
+            time.sleep(0.3)
+            inp.clear()
+            inp.send_keys(today)
+            inp.send_keys(Keys.TAB)
+            print(f"  OK Data zapolnena (fallback): {today}")
+            return
+    except Exception:
+        pass
+    print("  !! Pole 'Data u korrespondenta' ne najdeno")
+
+
+def fill_delivery_method(driver):
+    """Выбирает 'Электронная почта' в поле 'Способ получения'."""
+    print("  Sposob polucheniya: Elektronnaya pochta")
+    try:
+        # Ищем поле "Способ получения" — это выпадающий список (select или triggerfield)
+        label = driver.find_element(By.XPATH,
+            "//*[contains(text(),'Способ получения')]")
+        # Кликаем по полю рядом с лейблом чтобы открыть выпадающий список
+        parent = label.find_element(By.XPATH, "./ancestor::tr | ./ancestor::div[contains(@class,'field')]")
+        # Ищем кликабельную область — input или div триггера
+        clickable = None
+        for sel in ["input[type='text']", "div[class*='trigger']", "img[class*='trigger']"]:
+            try:
+                el = parent.find_element(By.CSS_SELECTOR, sel)
+                if el.is_displayed():
+                    clickable = el
+                    break
+            except Exception:
+                continue
+        if not clickable:
+            # Пробуем кликнуть сам родительский элемент
+            clickable = parent
+
+        js_click(driver, clickable, "Otkryt spisok")
+        time.sleep(1)
+
+        # Ищем "Электронная почта" в выпадающем списке
+        option = WebDriverWait(driver, 10).until(
+            EC.visibility_of_element_located((By.XPATH,
+                "//*[contains(text(),'Электронная почта')]"))
+        )
+        js_click(driver, option, "Elektronnaya pochta")
+        time.sleep(0.5)
+        print("  OK Sposob polucheniya vybran")
+        return
+    except Exception:
+        pass
+
+    # Фоллбэк: ищем select элемент
+    try:
+        selects = driver.find_elements(By.TAG_NAME, "select")
+        visible = [s for s in selects if s.is_displayed()]
+        for sel in visible:
+            options = sel.find_elements(By.TAG_NAME, "option")
+            for opt in options:
+                if "Электронная почта" in opt.text:
+                    opt.click()
+                    print("  OK Sposob polucheniya vybran (select)")
+                    return
+    except Exception:
+        pass
+    print("  !! Pole 'Sposob polucheniya' ne najdeno")
+
+
+def get_attachment_path():
+    """Ищет .msg файл рядом с exe/скриптом."""
+    if getattr(sys, 'frozen', False):
+        base_dir = os.path.dirname(sys.executable)
+    else:
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+
+    msg_files = [f for f in os.listdir(base_dir) if f.lower().endswith('.msg')]
+    if not msg_files:
+        return None
+    if len(msg_files) == 1:
+        return os.path.join(base_dir, msg_files[0])
+    # Если несколько — берём первый, но сообщаем
+    print(f"  ! Najdeno {len(msg_files)} .msg fajlov, berem: {msg_files[0]}")
+    return os.path.join(base_dir, msg_files[0])
+
+
+def attach_content(driver, file_path):
+    """Нажимает 'Присоединить содержимое' и загружает файл."""
+    print(f"  Prisoedinenie fajla: {os.path.basename(file_path)}")
+
+    # Кликаем кнопку "Присоединить содержимое"
+    try:
+        btn = WebDriverWait(driver, TIMEOUT).until(
+            EC.presence_of_element_located((By.XPATH,
+                "//div[contains(text(),'Присоединить содержимое')]"))
+        )
+        js_click(driver, btn, "Prisoedinit soderzhimoe")
+        time.sleep(2)
+    except Exception as e:
+        print(f"  !! Knopka 'Prisoedinit soderzhimoe' ne najdena: {e}")
+        return
+
+    # Ищем скрытый input[type='file'] и отправляем путь к файлу
+    try:
+        file_input = driver.find_element(By.CSS_SELECTOR, "input[type='file']")
+        file_input.send_keys(file_path)
+        print(f"  OK Fajl vybran: {os.path.basename(file_path)}")
+        time.sleep(2)
+    except Exception:
+        # Фоллбэк: ищем все input[type='file'], включая скрытые
+        try:
+            file_inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='file']")
+            if file_inputs:
+                # Делаем input видимым через JS и отправляем файл
+                driver.execute_script(
+                    "arguments[0].style.display='block'; arguments[0].style.visibility='visible';",
+                    file_inputs[0])
+                time.sleep(0.5)
+                file_inputs[0].send_keys(file_path)
+                print(f"  OK Fajl vybran (fallback): {os.path.basename(file_path)}")
+                time.sleep(2)
+            else:
+                print("  !! input[type='file'] ne najden na stranice!")
+                return
+        except Exception as e:
+            print(f"  !! Oshibka zagruzki fajla: {e}")
+            return
+
+    # Нажимаем кнопку подтверждения в диалоге
+    try:
+        confirm_btn = WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR,
+                "#SetContentDialogBtnSend, [id*='SetContentDialogBtnSend']"))
+        )
+        js_click(driver, confirm_btn, "Podtverdit prisoedinenie")
+        time.sleep(3)
+        print("  OK Fajl prisoedinyon!")
+    except Exception:
+        # Фоллбэк по тексту кнопки
+        try:
+            btns = driver.find_elements(By.XPATH,
+                "//div[contains(text(),'Присоединить содержимое')] | //button[contains(text(),'Присоединить')]")
+            visible = [b for b in btns if b.is_displayed()]
+            if visible:
+                js_click(driver, visible[-1], "Podtverdit (fallback)")
+                time.sleep(3)
+                print("  OK Fajl prisoedinyon!")
+        except Exception as e:
+            print(f"  !! Oshibka podtverzhdeniya: {e}")
+
+
+def add_addressee(driver, person_name):
+    """Добавляет адресата на вкладке Реквизиты через кнопку '+'."""
+    print(f"  Adresat: {person_name}")
+    try:
+        # Ищем кнопку "+" рядом с разделом "Адресаты"
+        plus_buttons = driver.find_elements(By.CSS_SELECTOR, "img[src*='add']")
+        visible_plus = [b for b in plus_buttons if b.is_displayed()]
+        if not visible_plus:
+            # Фоллбэк: ищем кнопку "+" по другим селекторам
+            plus_buttons = driver.find_elements(By.XPATH,
+                "//div[contains(@class,'add')] | //img[contains(@class,'add')]")
+            visible_plus = [b for b in plus_buttons if b.is_displayed()]
+
+        if visible_plus:
+            js_click(driver, visible_plus[0], "+ Adresat")
+            time.sleep(2)
+            add_person_from_directory(driver, person_name, "Adresat")
+        else:
+            print("  !! Knopka + ne najdena dlya adresatov")
+    except Exception as e:
+        print(f"  !! Oshibka dobavleniya adresata: {e}")
+
+
+def go_to_distribution_tab(driver):
+    """Переходит на вкладку 'Рассылка'."""
+    print("  Perekhod na vkladku Rassylka...")
+    try:
+        tab = WebDriverWait(driver, TIMEOUT).until(
+            EC.presence_of_element_located((By.XPATH,
+                "//div[contains(text(),'Рассылка')] | //span[contains(text(),'Рассылка')]"))
+        )
+        js_click(driver, tab, "Vkladka Rassylka")
+        time.sleep(2)
+        print("  OK Vkladka Rassylka otkryta")
+    except Exception as e:
+        print(f"  !! Vkladka Rassylka ne najdena: {e}")
+
+
+def add_distribution_addressee(driver, person_name):
+    """Добавляет адресата на вкладке 'Рассылка' через поле 'Добавить адресатов'."""
+    print(f"  Rassylka adresat: {person_name}")
+    try:
+        # Ищем поле "Добавить адресатов" — combobox внизу
+        corr_input = None
+
+        # По id combobox
+        inputs = driver.find_elements(By.CSS_SELECTOR, "input[id*='select_combobox-input']")
+        visible = [i for i in inputs if i.is_displayed()]
+        if visible:
+            corr_input = visible[-1]  # берём последний видимый (внизу страницы)
+
+        if not corr_input:
+            # По лейблу
+            try:
+                label = driver.find_element(By.XPATH,
+                    "//*[contains(text(),'Добавить адресатов')]")
+                parent = label.find_element(By.XPATH, "./ancestor::div[contains(@class,'field')] | ./ancestor::tr")
+                inp = parent.find_element(By.CSS_SELECTOR, "input[type='text']")
+                if inp.is_displayed():
+                    corr_input = inp
+            except Exception:
+                pass
+
+        if not corr_input:
+            print("  !! Pole 'Dobavit adresatov' ne najdeno!")
+            return
+
+        # Вводим фамилию
+        surname = person_name.split()[0]
+        corr_input.click()
+        time.sleep(0.3)
+        corr_input.clear()
+        corr_input.send_keys(surname)
+        print(f"  OK Vvedena familiya: {surname}")
+        time.sleep(2)
+
+        # Ищем в выпадающем списке
+        results = driver.find_elements(By.XPATH,
+            f"//*[contains(text(),'{surname}')]")
+        visible_results = [r for r in results if r.is_displayed() and r != corr_input]
+        if visible_results:
+            for r in visible_results:
+                if match_correspondent(r.text, person_name):
+                    js_click(driver, r, f"Vybor: {r.text.strip()}")
+                    time.sleep(1)
+                    print(f"  OK Adresat dobavlen: {person_name}")
+                    return
+            js_click(driver, visible_results[0], f"Vybor (pervyj): {visible_results[0].text.strip()}")
+            time.sleep(1)
+            print(f"  OK Adresat dobavlen: {person_name}")
+        else:
+            print(f"  !! Adresat ne najden v spiske: {person_name}")
+    except Exception as e:
+        print(f"  !! Oshibka: {e}")
+
+
+def create_one_document(driver, doc_data, index, total):
+    """Создаёт один входящий документ."""
+    print(f"\n{'='*60}")
+    print(f"DOKUMENT {index}/{total}")
+    print(f"  Soderzhanie: {doc_data['содержание'][:80]}...")
+    print(f"  Korrespondent: {doc_data['корреспондент']}")
+    print(f"{'='*60}")
+
+    # ШАГ 1: Кнопка создания документа
+    print("\n[1/5] Knopka sozdaniya dokumenta...")
+    el = WebDriverWait(driver, TIMEOUT).until(
+        EC.presence_of_element_located((By.ID, "mainscreen-create-button"))
+    )
+    time.sleep(1)
+    js_click(driver, el, "Knopka sozdaniya dokumenta")
+    time.sleep(3)
+
+    # ШАГ 2: Тип — Входящий документ
+    print("\n[2/5] Tip: Vkhodyashchij dokument...")
+    wait_and_click(driver, By.XPATH,
+        "//div[contains(text(),'Входящий документ')]",
+        "Vkhodyashchij dokument")
+    time.sleep(1)
+
+    # ШАГ 3: Вид — Письма, заявления и жалобы граждан, акционеров
+    print("\n[3/5] Vid: Pisma, zayavleniya...")
+    wait_and_click(driver, By.XPATH,
+        "//div[contains(text(),'Письма, заявления и жалобы граждан')] | //td[contains(text(),'Письма, заявления и жалобы граждан')]",
+        "Pisma, zayavleniya i zhaloby")
+    time.sleep(0.5)
+
+    # Кнопка "Создать документ"
+    print("  Sozdat dokument...")
+    wait_and_click(driver, By.XPATH,
+        "//button[contains(text(),'Создать документ')] | //div[contains(text(),'Создать документ')]",
+        "Sozdat dokument")
+    print("  Zhdu zagruzku formy (5 sek)...")
+    time.sleep(5)
+
+    # ШАГ 4: Заполнение формы
+    print("\n[4/5] Zapolnyayu formu...")
+
+    # --- Краткое содержание ---
+    print("\n  Kratkoe soderzhanie:")
+    try:
+        textareas = driver.find_elements(By.TAG_NAME, "textarea")
+        visible_ta = [ta for ta in textareas if ta.is_displayed()]
+        if visible_ta:
+            visible_ta[0].click()
+            time.sleep(0.3)
+            visible_ta[0].clear()
+            visible_ta[0].send_keys(doc_data["содержание"])
+            print(f"  OK Zapolneno")
+        else:
+            print("  !! Textarea ne najdena")
+    except Exception as e:
+        print(f"  !! Oshibka: {e}")
+    time.sleep(0.5)
+
+    # --- Корреспондент ---
+    print("\n  Korrespondent:")
+    fill_correspondent(driver, doc_data["корреспондент"])
+    time.sleep(1)
+
+    # --- Номер у корреспондента ---
+    print("\n  Nomer:")
+    fill_corr_number(driver)
+    time.sleep(0.5)
+
+    # --- Дата у корреспондента ---
+    print("\n  Data:")
+    fill_corr_date(driver)
+    time.sleep(0.5)
+
+    # --- Адресат (Басманов) ---
+    print("\n  Adresat:")
+    add_addressee(driver, "Басманов Александр Владимирович")
+    time.sleep(0.5)
+
+    # --- Способ получения ---
+    print("\n  Sposob polucheniya:")
+    fill_delivery_method(driver)
+    time.sleep(0.5)
+
+    # ШАГ 5: Сохранение
+    print("\n[5/8] Sokhranenie...")
+    try:
+        save_btn = WebDriverWait(driver, TIMEOUT).until(
+            EC.presence_of_element_located((By.XPATH,
+                "//button[contains(text(),'Сохранить')] | //div[contains(text(),'Сохранить')]"))
+        )
+        js_click(driver, save_btn, "Sokhranit")
+        time.sleep(3)
+        print(f"  OK Dokument {index}/{total} sokhranyon!")
+    except Exception as e:
+        print(f"  !! Oshibka sokhraneniya: {e}")
+
+    # ШАГ 6: Присоединить содержимое
+    if doc_data.get("файл"):
+        print("\n[6/8] Prisoedinenie soderzhimogo...")
+        attach_content(driver, doc_data["файл"])
+
+    # ШАГ 7: Вкладка "Рассылка" — добавить Халецкую
+    print("\n[7/9] Rassylka — dobavit Khaletskuyu...")
+    go_to_distribution_tab(driver)
+    add_distribution_addressee(driver, "Халецкая Юлия Владимировна")
+    time.sleep(1)
+
+    # ШАГ 8: Сохранить после рассылки
+    print("\n[8/9] Sokhranenie posle rassylki...")
+    try:
+        save_btn = WebDriverWait(driver, TIMEOUT).until(
+            EC.presence_of_element_located((By.XPATH,
+                "//div[contains(text(),'Сохранить')]"))
+        )
+        js_click(driver, save_btn, "Sokhranit")
+        time.sleep(3)
+    except Exception:
+        pass
+
+    # ШАГ 9: Зарегистрировать
+    if AUTO_REGISTER:
+        print("\n[9/9] Registratsiya...")
+        try:
+            reg_btn = WebDriverWait(driver, TIMEOUT).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR,
+                    "#header-action-btn-register, [id*='header-action-btn-register']"))
+            )
+            js_click(driver, reg_btn, "Zaregistrirovat")
+            time.sleep(3)
+            print(f"  OK Dokument {index}/{total} ZAREGISTRIROVAN!")
+        except Exception:
+            try:
+                btn = driver.find_element(By.XPATH,
+                    "//div[contains(text(),'Зарегистрировать')]")
+                js_click(driver, btn, "Zaregistrirovat (fallback)")
+                time.sleep(3)
+                print(f"  OK Dokument {index}/{total} ZAREGISTRIROVAN!")
+            except Exception as e:
+                print(f"  !! Knopka 'Zaregistrirovat' ne najdena: {e}")
+    else:
+        print(f"\n[9/9] Dokument {index}/{total} gotov (bez registratsii)")
+
+    # Возвращаемся на главную для следующего документа
+    time.sleep(2)
+    driver.get(ASUD_URL)
+    print("  Zhdu zagruzku glavnoj...")
+    time.sleep(5)
 
 
 def main():
     print("=" * 60)
-    print("АСУД ИК - Создание Служебной записки")
+    print("ASUD IK - Paketnoe sozdanie Vkhodyashchikh dokumentov")
     print("=" * 60)
 
+    # --- Поиск Excel-файла рядом с exe/скриптом ---
+    if getattr(sys, 'frozen', False):
+        base_dir = os.path.dirname(sys.executable)
+    else:
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+
+    xlsx_files = [f for f in os.listdir(base_dir) if f.lower().endswith('.xlsx')]
+
+    if not xlsx_files:
+        print(f"!! Ne najden .xlsx fajl v papke: {base_dir}")
+        print("   Polozhi Excel-fajl ryadom s exe.")
+        input("Enter...")
+        sys.exit(1)
+    elif len(xlsx_files) == 1:
+        excel_path = os.path.join(base_dir, xlsx_files[0])
+        print(f"\nNajden fajl: {xlsx_files[0]}")
+    else:
+        print(f"\nNajdeno {len(xlsx_files)} xlsx-fajlov:")
+        for i, f in enumerate(xlsx_files, 1):
+            print(f"  {i}. {f}")
+        choice = input("Vyberi nomer fajla: ").strip()
+        try:
+            excel_path = os.path.join(base_dir, xlsx_files[int(choice) - 1])
+        except (ValueError, IndexError):
+            print("!! Nevvernyj vybor")
+            input("Enter...")
+            sys.exit(1)
+
+    # --- Поиск .msg файла ---
+    msg_path = get_attachment_path()
+    if msg_path:
+        print(f"Fajl dlya prisoedineniya: {os.path.basename(msg_path)}")
+    else:
+        print("! .msg fajl ne najden — dokumenty budut bez vlozheniya")
+
+    # --- Загрузка данных ---
+    print(f"\nChtenie fajla: {excel_path}")
+    docs = load_excel(excel_path)
+    # Добавляем путь к файлу в каждый документ
+    for doc in docs:
+        doc["файл"] = msg_path
+    print(f"Najdeno dokumentov: {len(docs)}")
+
+    if not docs:
+        print("!! Net dannyh dlya sozdaniya!")
+        input("Enter...")
+        sys.exit(1)
+
+    # Показать превью
+    print("\nPervye 5 zapisej:")
+    for i, d in enumerate(docs[:5], 1):
+        print(f"  {i}. {d['корреспондент']} | {d['содержание'][:60]}...")
+
+    print(f"\nVsego: {len(docs)} dokumentov")
+    confirm = input("Nachat sozdanie? (da/net): ").strip().lower()
+    if confirm not in ("da", "yes", "y", "д", "да"):
+        print("Otmeneno.")
+        sys.exit(0)
+
+    # --- Запуск браузера ---
     driver_path = get_driver_path()
     print(f"\nEdgeDriver: {driver_path}")
 
@@ -198,401 +734,43 @@ def main():
     options.add_argument("--auth-server-whitelist=*.interrao.ru")
     options.add_argument("--auth-negotiate-delegate-whitelist=*.interrao.ru")
     options.add_argument("--log-level=3")
-    options.add_argument("--disable-gpu")
     options.add_experimental_option('excludeSwitches', ['enable-logging'])
 
     service = EdgeService(executable_path=driver_path)
     driver = webdriver.Edge(service=service, options=options)
 
     try:
-        # SHAG 1
-        print("\n[1/7] Открываю АСУД...")
+        # Открываем АСУД
+        print("\nOtkryvayu ASUD...")
         driver.get(ASUD_URL)
+        print("  Zhdu zagruzku GWT (10 sek)...")
+        time.sleep(10)
+        print("  OK Stranica zagruzhena")
 
-        # Адаптивное ожидание загрузки
-        print("  Жду готовности страницы...")
-        WebDriverWait(driver, 120).until(
-            lambda d: d.execute_script("return document.readyState === 'complete'")
-        )
-        print("  Жду появление кнопки создания...")
-        WebDriverWait(driver, 120).until(
-            EC.presence_of_element_located((By.ID, "mainscreen-create-button"))
-        )
-        print("  Жду загрузку данных в таблице...")
-        # Ждём пока в таблице документов появятся данные (tr с классом grid row)
-        try:
-            WebDriverWait(driver, 120).until(
-                lambda d: len(d.find_elements(By.CSS_SELECTOR,
-                    "tr[class*='GridView-row'], tr[class*='grid-row'], div[class*='GridStateStyles']")) > 0
-            )
-        except Exception:
-            pass
-        # Дополнительная пауза чтобы GWT всё дорисовал
-        time.sleep(5)
-        print("  ОК Загружено")
-
-        # SHAG 2
-        print("\n[2/7] Кнопка создания документа...")
-        el = WebDriverWait(driver, TIMEOUT).until(
-            EC.element_to_be_clickable((By.ID, "mainscreen-create-button"))
-        )
-        time.sleep(PAUSE)
-        safe_click(driver, el, "Кнопка создания")
-        print("  Жду открытие диалога...")
-        time.sleep(PAUSE)
-
-        # SHAG 3
-        print("\n[3/7] Исходящий документ...")
-        # У элемента есть id="Исходящий документ" (из DevTools)
-        el = WebDriverWait(driver, TIMEOUT).until(
-            EC.presence_of_element_located((By.XPATH,
-                "//*[@id='Исходящий документ'] | //div[contains(text(),'Исходящий документ')]"))
-        )
-        time.sleep(PAUSE)
-        safe_click(driver, el, "Исходящий документ")
-        print("  Жду загрузку подтипов...")
-        time.sleep(PAUSE)
-
-        # SHAG 4
-        print("\n[4/7] Служебная записка...")
-        # Ищем в правой таблице Вид — может быть div, td или span
-        el = WebDriverWait(driver, TIMEOUT).until(
-            EC.presence_of_element_located((By.XPATH,
-                "//*[contains(text(),'Служебная записка')]"))
-        )
-        time.sleep(PAUSE)
-        safe_click(driver, el, "Служебная записка")
-        time.sleep(PAUSE)
-
-        # SHAG 5
-        print("\n[5/7] Создать документ...")
-        wait_and_click(driver, By.XPATH,
-            "//button[contains(text(),'Создать документ')] | //div[contains(text(),'Создать документ')]",
-            "Создать документ")
-        print("  Жду форму...")
-        time.sleep(PAUSE)
-
-        # SHAG 6
-        print("\n[6/7] Заполняю форму...")
-
-        print("\n  Краткое содержание:")
-        try:
-            textareas = driver.find_elements(By.TAG_NAME, "textarea")
-            visible_ta = [ta for ta in textareas if ta.is_displayed()]
-            if visible_ta:
-                driver.execute_script("arguments[0].value = arguments[1];",
-                    visible_ta[0], DOC_DATA["краткое_содержание"])
-                driver.execute_script("""
-                    var evt = new Event('input', {bubbles: true});
-                    arguments[0].dispatchEvent(evt);
-                    var evt2 = new Event('change', {bubbles: true});
-                    arguments[0].dispatchEvent(evt2);
-                """, visible_ta[0])
-                print(f"  ОК Заполнено")
-            else:
-                print("  !! Textarea не найдена")
-        except Exception as e:
-            print(f"  !! Ошибка: {e}")
-        time.sleep(PAUSE)
-
-        print("\n  Адресаты:")
-        for person in DOC_DATA["адресаты"]:
+        # Создаём документы в цикле
+        for i, doc in enumerate(docs, 1):
             try:
-                add_person_to_combobox(driver, "Адресаты", person)
+                create_one_document(driver, doc, i, len(docs))
             except Exception as e:
-                print(f"  !! Ошибка: {e}")
+                print(f"\n!! OSHIBKA pri sozdanii dokumenta {i}: {e}")
+                print("  Probuju sleduyushchij...")
+                driver.get(ASUD_URL)
+                time.sleep(5)
+                continue
 
-        print("\n  Подписанты:")
-        for person in DOC_DATA["подписанты"]:
-            try:
-                add_person_to_combobox(driver, "Подписанты", person)
-            except Exception as e:
-                print(f"  !! Ошибка: {e}")
+        print(f"\n{'='*60}")
+        print(f"GOTOVO! Sozdano dokumentov: {len(docs)}")
+        print(f"{'='*60}")
 
-        print("\n  Проект:")
-        try:
-            # Кликаем "+" у "Добавление проекта"
-            plus_btn = None
-            # Ищем img с data-marker="select-btn" рядом с "Добавление проекта"
-            try:
-                section = driver.find_element(By.XPATH,
-                    "//*[contains(text(),'Добавление проекта')]")
-                parent = section
-                for _ in range(5):
-                    parent = parent.find_element(By.XPATH, "..")
-                    btns = parent.find_elements(By.CSS_SELECTOR,
-                        "img[data-marker='select-btn'], img.gwt-Image")
-                    visible = [b for b in btns if b.is_displayed()]
-                    if visible:
-                        plus_btn = visible[-1]
-                        break
-            except Exception:
-                pass
-
-            # Запасной вариант: ищем все img.gwt-Image с select-btn
-            if not plus_btn:
-                btns = driver.find_elements(By.CSS_SELECTOR,
-                    "img[data-marker='select-btn']")
-                visible = [b for b in btns if b.is_displayed()]
-                if visible:
-                    plus_btn = visible[-1]
-
-            if plus_btn:
-                safe_click(driver, plus_btn, "+ Добавление проекта")
-                time.sleep(PAUSE)
-            else:
-                print("  !! Кнопка + проекта не найдена")
-
-            # В диалоге "Множественный выбор": ждём загрузку диалога
-            print("  Жду загрузку диалога проектов...")
-            time.sleep(PAUSE)
-
-            # Находим поле поиска по placeholder
-            search_input = None
-            try:
-                search_input = driver.find_element(By.CSS_SELECTOR,
-                    "input[placeholder*='код или наименование проекта']")
-            except Exception:
-                # Запасной: любой input с placeholder про проект
-                dialog_inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='text']")
-                for inp in dialog_inputs:
-                    try:
-                        ph = inp.get_attribute("placeholder") or ""
-                        if "проект" in ph.lower() and inp.is_displayed():
-                            search_input = inp
-                            break
-                    except Exception:
-                        continue
-
-            if search_input:
-                # Кликаем на поле чтобы оно стало активным
-                safe_click(driver, search_input, "Поле поиска проекта")
-                time.sleep(1)
-                search_input.clear()
-                time.sleep(0.5)
-                # Вводим по символу для надёжности
-                for char in DOC_DATA["проект"]:
-                    search_input.send_keys(char)
-                    time.sleep(0.2)
-                print(f"  Ввожу код проекта: {DOC_DATA['проект']}")
-                time.sleep(PAUSE)
-                # Enter для поиска
-                search_input.send_keys(Keys.ENTER)
-                time.sleep(PAUSE)
-            else:
-                print("  !! Поле поиска проекта не найдено")
-
-            # Выбираем первый результат (00-000-000 Нет проекта)
-            try:
-                result = WebDriverWait(driver, TIMEOUT).until(
-                    EC.presence_of_element_located((By.XPATH,
-                        "//*[contains(text(),'Нет проекта')] | //*[contains(text(),'00-000')]"))
-                )
-                safe_click(driver, result, "Выбор проекта")
-                time.sleep(PAUSE)
-            except Exception:
-                print("  !! Проект не найден в списке")
-
-            # Нажимаем "Готово" (div с id="oshs-select-button")
-            try:
-                done_btn = driver.find_element(By.ID, "oshs-select-button")
-                if done_btn.is_displayed():
-                    safe_click(driver, done_btn, "Готово")
-                    time.sleep(PAUSE)
-            except Exception:
-                # Запасной вариант — ищем по тексту в любом теге
-                try:
-                    done_btn = driver.find_element(By.XPATH,
-                        "//*[contains(text(),'Готово')]")
-                    if done_btn.is_displayed():
-                        safe_click(driver, done_btn, "Готово")
-                        time.sleep(PAUSE)
-                except Exception:
-                    print("  !! Кнопка 'Готово' не найдена")
-
-        except Exception as e:
-            print(f"  !! Ошибка: {e}")
-
-        # SHAG 7
-        print("\n[7/7] Сохраняю документ...")
-        try:
-            save_btn = WebDriverWait(driver, TIMEOUT).until(
-                EC.element_to_be_clickable((By.ID, "header-save-btn"))
-            )
-            time.sleep(PAUSE)
-            safe_click(driver, save_btn, "Сохранить")
-            time.sleep(PAUSE)
-            print("  ОК Документ сохранён!")
-        except Exception as e:
-            print(f"  !! Ошибка сохранения: {e}")
-
-        # SHAG 8
-        print("\n[8] Жизненный цикл → Проверка оформления...")
-
-        # Кликаем вкладку "Жизненный цикл"
-        try:
-            lc_tab = WebDriverWait(driver, TIMEOUT).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR,
-                    "[data-marker='tab-lifecycle']"))
-            )
-            time.sleep(PAUSE)
-            safe_click(driver, lc_tab, "Жизненный цикл")
-            time.sleep(PAUSE)
-        except Exception:
-            # Запасной: по тексту
-            try:
-                lc_tab = driver.find_element(By.XPATH,
-                    "//*[contains(text(),'Жизненный цикл')]")
-                safe_click(driver, lc_tab, "Жизненный цикл")
-                time.sleep(PAUSE)
-            except Exception as e:
-                print(f"  !! Вкладка 'Жизненный цикл' не найдена: {e}")
-
-        # Ищем иконку контекстного меню рядом с "Проверка оформления"
-        try:
-            # Находим секцию "Проверка оформления"
-            section = WebDriverWait(driver, TIMEOUT).until(
-                EC.presence_of_element_located((By.XPATH,
-                    "//*[contains(text(),'Проверка оформления')]"))
-            )
-            time.sleep(PAUSE)
-
-            # Ищем иконку меню (⚙) рядом с секцией
-            menu_icon = None
-            parent = section
-            for _ in range(5):
-                parent = parent.find_element(By.XPATH, "..")
-                icons = parent.find_elements(By.CSS_SELECTOR,
-                    "img[data-name='MSFO_CNTX_MENU_IMG'], img[title='Контекстное меню']")
-                visible = [i for i in icons if i.is_displayed()]
-                if visible:
-                    menu_icon = visible[0]
-                    break
-
-            if menu_icon:
-                safe_click(driver, menu_icon, "Контекстное меню (Проверка оформления)")
-                time.sleep(PAUSE)
-            else:
-                print("  !! Иконка меню не найдена")
-
-            # Кликаем "Добавить участника этапа"
-            add_btn = WebDriverWait(driver, TIMEOUT).until(
-                EC.presence_of_element_located((By.XPATH,
-                    "//*[contains(text(),'Добавить участника этапа')]"))
-            )
-            time.sleep(1)
-            safe_click(driver, add_btn, "Добавить участника этапа")
-            time.sleep(PAUSE)
-
-            # SHAG 9: Поиск участника — Матус Елена Анатольевна
-            print("\n[9] Поиск участника: Матус...")
-            person = DOC_DATA["подписанты"][0]
-            surname = person.split()[0]
-
-            # Ищем поле поиска по placeholder или data-marker
-            search_input = None
-            try:
-                search_input = driver.find_element(By.CSS_SELECTOR,
-                    "input[data-marker='search-appointment-field']")
-            except Exception:
-                pass
-            if not search_input:
-                try:
-                    search_input = driver.find_element(By.CSS_SELECTOR,
-                        "input[placeholder*='ФИО']")
-                except Exception:
-                    pass
-
-            if search_input:
-                safe_click(driver, search_input, "Поле поиска участника")
-                time.sleep(1)
-                search_input.clear()
-                time.sleep(0.5)
-                for char in surname:
-                    search_input.send_keys(char)
-                    time.sleep(0.1)
-                print(f"  Ввожу: {surname}")
-                time.sleep(PAUSE)
-                search_input.send_keys(Keys.ENTER)
-                time.sleep(PAUSE)
-            else:
-                print("  !! Поле поиска участника не найдено")
-
-            # Выбираем Матус из результатов
-            try:
-                time.sleep(PAUSE)
-                clicked = False
-
-                # Способ 1: Найти строку tr с классом OSHSGridStyle-row
-                rows = driver.find_elements(By.CSS_SELECTOR,
-                    "tr[class*='OSHSGridStyle-row'], tr[class*='obj-list-rec']")
-                for row in rows:
-                    try:
-                        if not row.is_displayed():
-                            continue
-                        if surname in row.text:
-                            ActionChains(driver).double_click(row).perform()
-                            print(f"  ОК Выбран (двойной клик по строке): {person}")
-                            clicked = True
-                            time.sleep(PAUSE)
-                            break
-                    except Exception:
-                        continue
-
-                # Способ 2: Ищем по XPath любой элемент с текстом
-                if not clicked:
-                    results = driver.find_elements(By.XPATH,
-                        f"//*[contains(text(),'{surname}')]")
-                    for res in results:
-                        try:
-                            if not res.is_displayed():
-                                continue
-                            tag = res.tag_name.lower()
-                            if tag == 'input':
-                                continue
-                            ActionChains(driver).double_click(res).perform()
-                            print(f"  ОК Выбран (двойной клик): {person}")
-                            clicked = True
-                            time.sleep(PAUSE)
-                            break
-                        except Exception:
-                            continue
-
-                if not clicked:
-                    print(f"  !! Не удалось кликнуть на {person}")
-            except Exception:
-                print(f"  !! Не найден: {person}")
-
-            # Нажимаем "Готово"
-            try:
-                done_btn = driver.find_element(By.ID, "oshs-select-button")
-                if done_btn.is_displayed():
-                    safe_click(driver, done_btn, "Готово")
-                    time.sleep(PAUSE)
-            except Exception:
-                try:
-                    done_btn = driver.find_element(By.XPATH,
-                        "//*[contains(text(),'Готово')]")
-                    if done_btn.is_displayed():
-                        safe_click(driver, done_btn, "Готово")
-                        time.sleep(PAUSE)
-                except Exception:
-                    print("  !! Кнопка 'Готово' не найдена")
-
-            print("  ОК Участник добавлен!")
-
-        except Exception as e:
-            print(f"  !! Ошибка: {e}")
-
-        input("\n  Enter для закрытия браузера...")
+        input("\nEnter dlya zakrytiya brauzera...")
 
     except Exception as e:
-        print(f"\n!! Ошибка: {e}")
-        input("Enter для закрытия...")
+        print(f"\n!! Oshibka: {e}")
+        input("Enter dlya zakrytiya...")
 
     finally:
         driver.quit()
-        print("\nОК Браузер закрыт.")
+        print("\nOK Brauzer zakryt.")
 
 
 if __name__ == "__main__":
