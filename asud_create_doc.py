@@ -73,6 +73,43 @@ def js_click(driver, element, description=""):
     time.sleep(0.5)
 
 
+def wait_asud_loaded(driver, max_wait=120):
+    """Адаптивное ожидание полной загрузки АСУД.
+    1) document.readyState === 'complete'
+    2) Кнопка создания документа кликабельна
+    3) В таблице документов появились строки (данные прогрузились)
+    """
+    print("  Жду готовности страницы...")
+    try:
+        WebDriverWait(driver, max_wait).until(
+            lambda d: d.execute_script("return document.readyState === 'complete'")
+        )
+    except Exception:
+        print("  ! readyState не complete за отведённое время")
+
+    print("  Жду кнопку создания документа...")
+    try:
+        WebDriverWait(driver, max_wait).until(
+            EC.element_to_be_clickable((By.ID, "mainscreen-create-button"))
+        )
+    except Exception:
+        print("  ! Кнопка создания не появилась")
+
+    print("  Жду загрузку данных в таблице...")
+    try:
+        WebDriverWait(driver, max_wait).until(
+            lambda d: len(d.find_elements(By.CSS_SELECTOR,
+                "tr[class*='GridView-row'], tr[class*='grid-row'], "
+                "tr[class*='OSHSGridStyle-row'], tr[class*='obj-list-rec']")) > 0
+        )
+    except Exception:
+        print("  ! Данные в таблице не появились — продолжаем")
+
+    # Дополнительная пауза чтобы GWT дорисовал UI
+    time.sleep(5)
+    print("  ОК АСУД загружен")
+
+
 def wait_and_click(driver, by, selector, description="", timeout=TIMEOUT):
     print(f"  -> Ожидаю: {description or selector}")
     el = WebDriverWait(driver, timeout).until(
@@ -727,8 +764,7 @@ def create_one_document(driver, doc_data, index, total):
     # Возвращаемся на главную для следующего документа
     time.sleep(2)
     driver.get(ASUD_URL)
-    print("  Жду загрузку главной...")
-    time.sleep(5)
+    wait_asud_loaded(driver)
 
 
 def main():
@@ -813,9 +849,7 @@ def main():
         # Открываем АСУД
         print("\nОткрываю АСУД...")
         driver.get(ASUD_URL)
-        print("  Жду загрузку GWT (10 сек)...")
-        time.sleep(10)
-        print("  ОК Страница загружена")
+        wait_asud_loaded(driver)
 
         # Создаём документы в цикле
         for i, doc in enumerate(docs, 1):
@@ -825,7 +859,7 @@ def main():
                 print(f"\n!! ОШИБКА при создании документа {i}: {e}")
                 print("  Пробую следующий...")
                 driver.get(ASUD_URL)
-                time.sleep(5)
+                wait_asud_loaded(driver)
                 continue
 
         print(f"\n{'='*60}")
