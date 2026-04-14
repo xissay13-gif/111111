@@ -293,7 +293,14 @@ def create_correspondent(driver, person_name):
             print("    !! Кнопка '+' у Корреспондент не найдена")
             return
         js_click(driver, plus_btn, "+ Корреспондент")
-        time.sleep(2)
+        # Ждём появления диалога "Поиск корреспондента" вместо sleep
+        try:
+            WebDriverWait(driver, 15).until(
+                EC.presence_of_element_located((By.XPATH,
+                    "//*[contains(text(),'Поиск корреспондента')]"))
+            )
+        except Exception:
+            print("    ! Диалог 'Поиск корреспондента' не появился за 15 сек")
     except Exception as e:
         print(f"    !! Ошибка шаг 1: {e}")
         close_open_modals(driver)
@@ -302,7 +309,15 @@ def create_correspondent(driver, person_name):
     # ШАГ 2: В "Поиск корреспондента" нажать "Добавить"
     print("    [2/7] 'Добавить' в Поиске корреспондента...")
     try:
+        # Ждём появления кнопки "Добавить"
         add_btn = None
+        try:
+            WebDriverWait(driver, 15).until(
+                EC.presence_of_element_located((By.XPATH,
+                    "//*[normalize-space(text())='Добавить']"))
+            )
+        except Exception:
+            pass
         btns = driver.find_elements(By.XPATH,
             "//*[normalize-space(text())='Добавить']")
         for b in btns:
@@ -311,9 +326,18 @@ def create_correspondent(driver, person_name):
                 break
         if not add_btn:
             print("    !! Кнопка 'Добавить' не найдена")
+            close_open_modals(driver)
             return
         js_click(driver, add_btn, "Добавить (новый корреспондент)")
-        time.sleep(2)
+        # Ждём появления диалога "Редактирование организации"
+        try:
+            WebDriverWait(driver, 15).until(
+                EC.presence_of_element_located((By.XPATH,
+                    "//*[contains(text(),'Редактирование организации') or "
+                    "contains(text(),'Поиск организации')]"))
+            )
+        except Exception:
+            print("    ! Диалог 'Редактирование организации' не появился за 15 сек")
     except Exception as e:
         print(f"    !! Ошибка шаг 2: {e}")
         close_open_modals(driver)
@@ -321,10 +345,16 @@ def create_correspondent(driver, person_name):
 
     # ШАГ 3: В "Редактирование организации" ввести фамилию в "Поиск организации"
     print("    [3/7] Поиск организации...")
-    # Ждём чтобы диалог дорисовался
-    time.sleep(2)
 
     try:
+        # Ждём появления поля "Поиск организации" (до 15 сек)
+        try:
+            WebDriverWait(driver, 15).until(
+                EC.presence_of_element_located((By.XPATH,
+                    "//*[normalize-space(text())='Поиск организации']"))
+            )
+        except Exception:
+            print("    ! Поле 'Поиск организации' не появилось за 15 сек")
         # Ищем input рядом с лейблом "Поиск организации" и ВВОДИМ значение
         # через JS в одной операции — чтобы избежать stale element reference.
         # JS возвращает 'ok' если нашёл и ввёл, 'no-label'/'no-input' если не удалось.
@@ -414,6 +444,16 @@ def create_correspondent(driver, person_name):
     # ШАГ 4: В секции "Физические лица" нажать "Добавить"
     print("    [4/7] 'Добавить' в Физические лица...")
     try:
+        # Ждём пока кнопка станет активной (после выбора организации)
+        try:
+            WebDriverWait(driver, 15).until(
+                EC.presence_of_element_located((By.XPATH,
+                    "//*[contains(text(),'Физические лица')]"))
+            )
+        except Exception:
+            pass
+        time.sleep(1)
+
         # Кнопка с id содержащим header-organization-dialog-add-a-user-button
         add_user_btn = None
         try:
@@ -436,9 +476,17 @@ def create_correspondent(driver, person_name):
                     break
         if not add_user_btn:
             print("    !! Кнопка 'Добавить' в физ.лицах не найдена")
+            close_open_modals(driver)
             return
         js_click(driver, add_user_btn, "Добавить физ. лицо")
-        time.sleep(2)
+        # Ждём открытия карточки физ. лица (поле "Фамилия")
+        try:
+            WebDriverWait(driver, 15).until(
+                EC.presence_of_element_located((By.XPATH,
+                    "//*[normalize-space(text())='Фамилия']"))
+            )
+        except Exception:
+            print("    ! Карточка физ. лица не появилась за 15 сек")
     except Exception as e:
         print(f"    !! Ошибка шаг 4: {e}")
         close_open_modals(driver)
@@ -484,7 +532,15 @@ def create_correspondent(driver, person_name):
                 save_btn = visible[-1]
         if save_btn:
             js_click(driver, save_btn, "Сохранить карточку")
-            time.sleep(2)
+            # Ждём закрытия карточки — возврат в "Редактирование организации"
+            # (кнопка "Выбрать физ. лиц" должна стать активной)
+            try:
+                WebDriverWait(driver, 15).until(
+                    EC.presence_of_element_located((By.XPATH,
+                        "//*[contains(text(),'Выбрать физ')]"))
+                )
+            except Exception:
+                print("    ! Кнопка 'Выбрать физ. лиц' не появилась за 15 сек")
     except Exception as e:
         print(f"    !! Ошибка шаг 5: {e}")
         close_open_modals(driver)
@@ -507,9 +563,16 @@ def create_correspondent(driver, person_name):
                 select_btn = visible[0]
         if select_btn:
             js_click(driver, select_btn, "Выбрать физ. лиц")
-            time.sleep(2)
+            # Ждём возврата в диалог "Поиск корреспондента" — появления кнопки "Готово"
+            try:
+                WebDriverWait(driver, 15).until(
+                    EC.presence_of_element_located((By.ID, "oshs-select-button"))
+                )
+            except Exception:
+                print("    ! Кнопка 'Готово' не появилась за 15 сек")
         else:
             print("    !! Кнопка 'Выбрать физ. лиц' не найдена")
+            close_open_modals(driver)
             return
     except Exception as e:
         print(f"    !! Ошибка шаг 6: {e}")
@@ -532,10 +595,12 @@ def create_correspondent(driver, person_name):
                 done_btn = visible[0]
         if done_btn:
             js_click(driver, done_btn, "Готово")
-            time.sleep(2)
+            # Ждём закрытия модалки
+            wait_modal_closed(driver)
             print(f"  ОК Корреспондент создан: {person_name}")
         else:
             print("    !! Кнопка 'Готово' не найдена")
+            close_open_modals(driver)
     except Exception as e:
         print(f"    !! Ошибка шаг 7: {e}")
         close_open_modals(driver)
