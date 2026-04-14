@@ -592,64 +592,59 @@ def attach_content(driver, file_path):
     на 'Присоединить содержимое' (он открывает нативный Explorer)."""
     print(f"  Присоединение файла: {os.path.basename(file_path)}")
 
-    # Сначала ищем input[type=file] БЕЗ кликов — часто он уже есть в DOM
-    file_input = None
-    try:
-        inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='file']")
-        print(f"  Найдено input[type=file] до клика: {len(inputs)}")
-        if inputs:
-            file_input = inputs[0]
-    except Exception:
-        pass
+    # Проверяем: есть ли input[type=file] без клика
+    inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='file']")
+    print(f"  input[type=file] до клика: {len(inputs)}")
 
-    # Если не нашли — пробуем открыть модалку ОДИН раз через JS клик
-    # (JS-клик на label обычно НЕ открывает нативный Explorer, в отличие
-    # от реального mouse-клика)
-    if not file_input:
+    # Если нет — открываем модалку JS-кликом (не настоящей мышью)
+    if not inputs:
         try:
             btn = driver.find_element(By.XPATH,
                 "//div[contains(text(),'Присоединить содержимое')]")
             driver.execute_script("arguments[0].click();", btn)
-            time.sleep(2)
-            inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='file']")
-            print(f"  Найдено input[type=file] после JS-клика: {len(inputs)}")
-            if inputs:
-                file_input = inputs[0]
+            time.sleep(3)  # даём модалке полностью прорисоваться
         except Exception as e:
             print(f"  !! Не удалось открыть модалку: {e}")
+            return
+
+    # Ищем input заново (предыдущие ссылки могли стать stale после рендера)
+    # Пробуем несколько раз — модалка рендерится асинхронно
+    file_input = None
+    for attempt in range(5):
+        try:
+            inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='file']")
+            if inputs:
+                file_input = inputs[0]
+                # Сразу же используем — не сохраняем ссылку
+                # Делаем видимым и шлём путь в одной "сессии"
+                driver.execute_script("""
+                    var el = arguments[0];
+                    el.style.display = 'block';
+                    el.style.visibility = 'visible';
+                    el.style.opacity = '1';
+                    el.style.width = '1px';
+                    el.style.height = '1px';
+                    el.style.position = 'static';
+                    el.removeAttribute('hidden');
+                """, file_input)
+                time.sleep(0.3)
+                file_input.send_keys(file_path)
+                time.sleep(1)
+                driver.execute_script(
+                    "arguments[0].dispatchEvent(new Event('change', {bubbles: true}));",
+                    file_input)
+                time.sleep(1)
+                print(f"  ОК Файл выбран: {os.path.basename(file_path)}")
+                break
+            time.sleep(1)
+        except Exception as e:
+            # Stale reference — переиспользуем цикл, найдём заново
+            print(f"  ! Попытка {attempt + 1}: {type(e).__name__}, повторяю...")
+            time.sleep(1)
+            continue
 
     if not file_input:
         print("  !! input[type='file'] не найден на странице!")
-        return
-
-    # Делаем input видимым (send_keys работает только на displayed элементы)
-    try:
-        driver.execute_script("""
-            var el = arguments[0];
-            el.style.display = 'block';
-            el.style.visibility = 'visible';
-            el.style.opacity = '1';
-            el.style.width = '1px';
-            el.style.height = '1px';
-            el.style.position = 'static';
-            el.removeAttribute('hidden');
-        """, file_input)
-        time.sleep(0.3)
-    except Exception:
-        pass
-
-    # ВАЖНО: send_keys в input[type=file] НЕ открывает Explorer,
-    # это просто присваивание пути через WebDriver API
-    try:
-        file_input.send_keys(file_path)
-        time.sleep(1)
-        driver.execute_script("""
-            arguments[0].dispatchEvent(new Event('change', {bubbles: true}));
-        """, file_input)
-        time.sleep(1)
-        print(f"  ОК Файл выбран: {os.path.basename(file_path)}")
-    except Exception as e:
-        print(f"  !! Ошибка отправки файла: {e}")
         return
 
     # Подтверждаем загрузку в модалке
