@@ -420,41 +420,52 @@ def fill_delivery_method(driver):
     Это triggerfield: клик открывает контекстное меню со списком опций."""
     print("  Способ получения: Электронная почта")
 
-    # 1. Находим поле по ТОЧНОМУ лейблу
-    trigger = find_input_near_label(driver, "Способ получения")
+    # Находим лейбл по точному тексту
+    labels = driver.find_elements(By.XPATH,
+        "//*[normalize-space(text())='Способ получения']")
 
-    # Запасной вариант: если нет input, ищем по лейблу и берём кликабельный div/trigger
-    if not trigger:
-        labels = driver.find_elements(By.XPATH,
-            "//*[normalize-space(text())='Способ получения']")
-        for label in labels:
-            try:
-                if not label.is_displayed():
-                    continue
-                for level in range(1, 6):
-                    parent = label
-                    for _ in range(level):
-                        parent = parent.find_element(By.XPATH, "..")
-                    # Ищем триггер — div с классом trigger или img
-                    for sel in ["div[class*='trigger']", "img[class*='trigger']",
-                                "[class*='ComboBox']", "[class*='combobox']"]:
-                        try:
-                            el = parent.find_element(By.CSS_SELECTOR, sel)
-                            if el.is_displayed():
-                                trigger = el
-                                break
-                        except Exception:
-                            continue
-                    if trigger:
+    trigger = None
+    for label in labels:
+        try:
+            if not label.is_displayed():
+                continue
+            # Поднимаемся вверх по DOM и ищем любой кликабельный элемент формы
+            for level in range(1, 8):
+                parent = label
+                for _ in range(level):
+                    parent = parent.find_element(By.XPATH, "..")
+
+                # 1) Любой input (readonly или нет — не важно)
+                inputs = parent.find_elements(By.CSS_SELECTOR, "input[type='text']")
+                for i in inputs:
+                    if i.is_displayed():
+                        trigger = i
                         break
                 if trigger:
                     break
-            except Exception:
-                continue
+
+                # 2) Триггер-элементы (div/img с классами trigger/combobox)
+                for sel in ["div[class*='trigger']", "img[class*='trigger']",
+                            "[class*='ComboBox']", "[class*='combobox']",
+                            "[data-marker*='trigger']"]:
+                    try:
+                        el = parent.find_element(By.CSS_SELECTOR, sel)
+                        if el.is_displayed():
+                            trigger = el
+                            break
+                    except Exception:
+                        continue
+                if trigger:
+                    break
+            if trigger:
+                break
+        except Exception:
+            continue
 
     if not trigger:
         print("  !! Поле 'Способ получения' не найдено")
         return
+    print(f"  Найден элемент triggerfield: <{trigger.tag_name}>")
 
     # 2. Прокручиваем и кликаем чтобы открыть dropdown
     try:
