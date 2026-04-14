@@ -208,8 +208,27 @@ def main():
         # SHAG 1
         print("\n[1/7] Открываю АСУД...")
         driver.get(ASUD_URL)
-        print("  Жду загрузку (60 сек)...")
-        time.sleep(60)
+
+        # Адаптивное ожидание загрузки
+        print("  Жду готовности страницы...")
+        WebDriverWait(driver, 120).until(
+            lambda d: d.execute_script("return document.readyState === 'complete'")
+        )
+        print("  Жду появление кнопки создания...")
+        WebDriverWait(driver, 120).until(
+            EC.presence_of_element_located((By.ID, "mainscreen-create-button"))
+        )
+        print("  Жду загрузку данных в таблице...")
+        # Ждём пока в таблице документов появятся данные (tr с классом grid row)
+        try:
+            WebDriverWait(driver, 120).until(
+                lambda d: len(d.find_elements(By.CSS_SELECTOR,
+                    "tr[class*='GridView-row'], tr[class*='grid-row'], div[class*='GridStateStyles']")) > 0
+            )
+        except Exception:
+            pass
+        # Дополнительная пауза чтобы GWT всё дорисовал
+        time.sleep(5)
         print("  ОК Загружено")
 
         # SHAG 2
