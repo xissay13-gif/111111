@@ -470,7 +470,7 @@ def create_correspondent(driver, person_name):
     # ШАГ 4: В секции "Физические лица" нажать "Добавить"
     print("    [4/7] 'Добавить' в Физические лица...")
     try:
-        # Ждём пока кнопка станет активной (после выбора организации)
+        # Ждём пока секция "Физические лица" появится
         try:
             WebDriverWait(driver, 15).until(
                 EC.presence_of_element_located((By.XPATH,
@@ -478,32 +478,67 @@ def create_correspondent(driver, person_name):
             )
         except Exception:
             pass
-        time.sleep(1)
 
-        # Кнопка с id содержащим header-organization-dialog-add-a-user-button
+        # Даём серверу время обработать создание организации
+        time.sleep(3)
+
+        # Ждём пока кнопка "Добавить" в физ.лицах станет КЛИКАБЕЛЬНОЙ
+        # (после создания/выбора организации — не просто появится в DOM)
+        print("    Жду активации кнопки 'Добавить'...")
         add_user_btn = None
-        try:
-            add_user_btn = driver.find_element(By.CSS_SELECTOR,
-                "[id*='header-organization-dialog-add-a-user-button']")
-        except Exception:
-            pass
+        for attempt in range(20):  # до 20 сек ожидания
+            try:
+                # Сначала ищем по id
+                try:
+                    btn = driver.find_element(By.CSS_SELECTOR,
+                        "[id*='header-organization-dialog-add-a-user-button']")
+                except Exception:
+                    btn = None
+
+                if not btn:
+                    # Фоллбэк: ищем в секции "Физические лица"
+                    try:
+                        section = driver.find_element(By.XPATH,
+                            "//*[contains(text(),'Физические лица')]")
+                        parent = section
+                        for _ in range(1, 6):
+                            parent = parent.find_element(By.XPATH, "..")
+                            btns = parent.find_elements(By.XPATH,
+                                ".//*[normalize-space(text())='Добавить']")
+                            visible = [b for b in btns if b.is_displayed()]
+                            if visible:
+                                btn = visible[0]
+                                break
+                    except Exception:
+                        pass
+
+                if btn:
+                    # Проверяем кликабельность: не disabled, видим, в окне
+                    is_enabled = driver.execute_script("""
+                        var el = arguments[0];
+                        if (!el.offsetParent) return false;  // скрыт
+                        if (el.getAttribute('aria-disabled') === 'true') return false;
+                        if (el.classList.contains('x-disabled')) return false;
+                        if (el.classList.contains('disabled')) return false;
+                        var style = window.getComputedStyle(el);
+                        if (style.pointerEvents === 'none') return false;
+                        if (parseFloat(style.opacity) < 0.5) return false;
+                        return true;
+                    """, btn)
+                    if is_enabled:
+                        add_user_btn = btn
+                        break
+                    else:
+                        print(f"    ! Кнопка пока disabled (попытка {attempt + 1})...")
+            except Exception:
+                pass
+            time.sleep(1)
+
         if not add_user_btn:
-            # Фоллбэк: ищем "Добавить" в контексте секции Физические лица
-            section = driver.find_element(By.XPATH,
-                "//*[contains(text(),'Физические лица')]")
-            parent = section
-            for _ in range(1, 6):
-                parent = parent.find_element(By.XPATH, "..")
-                btns = parent.find_elements(By.XPATH,
-                    ".//*[normalize-space(text())='Добавить']")
-                visible = [b for b in btns if b.is_displayed()]
-                if visible:
-                    add_user_btn = visible[0]
-                    break
-        if not add_user_btn:
-            print("    !! Кнопка 'Добавить' в физ.лицах не найдена")
+            print("    !! Кнопка 'Добавить' не активировалась за 20 сек")
             close_open_modals(driver)
             return
+
         js_click(driver, add_user_btn, "Добавить физ. лицо")
         # Ждём открытия карточки физ. лица (поле "Фамилия")
         try:
