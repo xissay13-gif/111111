@@ -565,84 +565,56 @@ def create_correspondent(driver, person_name):
     # ШАГ 5: Заполнить карточку физ. лица и нажать "Добавить"
     print("    [5/7] Заполнение карточки физ. лица...")
     try:
-        # Находим диалог "Карточка физического лица" по заголовку и работаем
-        # только внутри него. Это надёжнее чем z-index или id.
+        # Заполняем поля через id — самый надёжный способ.
+        # Из DevTools: id полей Parton_person_dialog_<поле>_*
         fields = [
-            ("Фамилия", surname),
-            ("Имя", first_name),
-            ("Отчество", middle_name),
-            ("Должность", "ФЛ"),
+            ("Фамилия", surname, "surname"),
+            ("Имя", first_name, "firstname"),
+            ("Отчество", middle_name, "middle"),
+            ("Должность", "ФЛ", "position"),
         ]
-        for label_text, value in fields:
-            # Всё в одной JS-операции: найти диалог карточки,
-            # в нём найти лейбл, рядом input, ввести значение
+        for label_text, value, id_part in fields:
             result = driver.execute_script("""
-                var labelText = arguments[0];
+                var idPart = arguments[0];
                 var value = arguments[1];
 
-                // 1) Найти диалог "Карточка физического лица" по тексту заголовка
-                var titleXpath = "//*[contains(text(),'Карточка физического лица')]";
-                var titleEls = document.evaluate(titleXpath, document, null,
-                    XPathResult.ORDERED_NODE_ITERATOR_TYPE, null);
-                var titleEl = null, tn;
-                while ((tn = titleEls.iterateNext()) !== null) {
-                    if (tn.offsetParent !== null) { titleEl = tn; break; }
-                }
-                if (!titleEl) return 'no-title';
+                // Ищем все элементы с id содержащим Parton_person_dialog + ключевое слово
+                var selector = "[id*='Parton_person_dialog'][id*='" + idPart + "']";
+                var els = document.querySelectorAll(selector);
 
-                // Поднимаемся до контейнера диалога (ищем ближайшего предка-диалог)
-                var dialog = titleEl;
-                for (var i = 0; i < 10; i++) {
-                    dialog = dialog.parentElement;
-                    if (!dialog) return 'no-dialog';
-                    // Предок-контейнер где есть все поля
-                    if (dialog.querySelectorAll('input[type="text"]').length >= 2) break;
-                }
+                for (var i = 0; i < els.length; i++) {
+                    var el = els[i];
+                    if (el.offsetParent === null) continue;
 
-                // 2) Ищем лейбл внутри этого диалога
-                var xpath = ".//*[contains(normalize-space(.), '" + labelText + "')]";
-                var result = document.evaluate(xpath, dialog, null,
-                    XPathResult.ORDERED_NODE_ITERATOR_TYPE, null);
-                var labels = [];
-                var node;
-                while ((node = result.iterateNext()) !== null) {
-                    var t = (node.textContent || '').trim();
-                    // Берём только элементы где текст МАКСИМАЛЬНО близок к искомому
-                    // (не контейнер с множеством других элементов)
-                    if (node.offsetParent === null) continue;
-                    if (node.children.length > 3) continue;  // пропускаем большие контейнеры
-                    if (t.length > 30) continue;  // слишком длинный — скорее всего не лейбл
-                    if (t.includes(labelText)) labels.push(node);
-                }
-                if (labels.length === 0) return 'no-label';
-
-                // 3) Для каждого лейбла ищем input рядом (в родителях)
-                for (var li = 0; li < labels.length; li++) {
-                    var parent = labels[li];
-                    for (var lvl = 0; lvl < 8; lvl++) {
-                        parent = parent.parentElement;
-                        if (!parent || parent === dialog.parentElement) break;
-                        var inputs = parent.querySelectorAll('input[type="text"]');
-                        for (var i = 0; i < inputs.length; i++) {
-                            var el = inputs[i];
-                            if (el.offsetParent !== null && !el.readOnly) {
-                                // Проверяем что этот input В ДИАЛОГЕ (не вне его)
-                                if (!dialog.contains(el)) continue;
-                                el.focus();
-                                el.value = value;
-                                el.dispatchEvent(new Event('input', {bubbles: true}));
-                                el.dispatchEvent(new Event('change', {bubbles: true}));
-                                el.dispatchEvent(new Event('blur', {bubbles: true}));
-                                return 'ok';
+                    // Если сам элемент input — используем его
+                    var inp = null;
+                    if (el.tagName.toLowerCase() === 'input') {
+                        inp = el;
+                    } else {
+                        // Иначе ищем input внутри контейнера
+                        var inputs = el.querySelectorAll('input[type="text"]');
+                        for (var j = 0; j < inputs.length; j++) {
+                            if (inputs[j].offsetParent !== null && !inputs[j].readOnly) {
+                                inp = inputs[j];
+                                break;
                             }
                         }
                     }
-                }
-                return 'no-input';
-            """, label_text, value)
 
-            if result == 'ok':
-                print(f"      ОК {label_text}: {value}")
+                    if (inp) {
+                        inp.focus();
+                        inp.value = value;
+                        inp.dispatchEvent(new Event('input', {bubbles: true}));
+                        inp.dispatchEvent(new Event('change', {bubbles: true}));
+                        inp.dispatchEvent(new Event('blur', {bubbles: true}));
+                        return 'ok:' + (inp.id || el.id || '?');
+                    }
+                }
+                return 'not-found';
+            """, id_part, value)
+
+            if result.startswith('ok'):
+                print(f"      ОК {label_text}: {value}  [{result}]")
             else:
                 print(f"      !! Поле '{label_text}' не заполнено ({result})")
             time.sleep(0.3)
