@@ -1537,8 +1537,47 @@ def create_one_document(driver, doc_data, index, total):
 
         if resolution_btn:
             js_click(driver, resolution_btn, "На резолюцию")
-            time.sleep(3)
-            print(f"  ОК Документ {index}/{total} отправлен НА РЕЗОЛЮЦИЮ!")
+            time.sleep(2)
+
+            # Подтверждаем диалог "Да/Нет"
+            print("  Жду диалог подтверждения...")
+            yes_btn = None
+            for attempt in range(10):
+                try:
+                    # По id (ConfirmBox, confirm-dialog, dialog-btn-yes и т.п.)
+                    for selector in [
+                        "[id*='ConfirmBox'][id*='yes']",
+                        "[id*='confirm'][id*='yes']",
+                        "[id*='dialog-btn-yes']",
+                    ]:
+                        try:
+                            btn = driver.find_element(By.CSS_SELECTOR, selector)
+                            if btn.is_displayed():
+                                yes_btn = btn
+                                break
+                        except Exception:
+                            continue
+                    if yes_btn:
+                        break
+                    # По тексту "Да"
+                    btns = driver.find_elements(By.XPATH,
+                        "//*[normalize-space(text())='Да']")
+                    for b in btns:
+                        if b.is_displayed():
+                            yes_btn = b
+                            break
+                    if yes_btn:
+                        break
+                except Exception:
+                    pass
+                time.sleep(1)
+
+            if yes_btn:
+                js_click(driver, yes_btn, "Да (подтверждение)")
+                time.sleep(3)
+                print(f"  ОК Документ {index}/{total} отправлен НА РЕЗОЛЮЦИЮ!")
+            else:
+                print(f"  ! Диалог 'Да' не появился за 10 сек")
         else:
             print(f"  ! Кнопка 'На резолюцию' не появилась за 10 сек")
 
