@@ -565,53 +565,105 @@ def create_correspondent(driver, person_name):
     # ШАГ 5: Заполнить карточку физ. лица и нажать "Добавить"
     print("    [5/7] Заполнение карточки физ. лица...")
     try:
-        # Заполняем поля через id — самый надёжный способ.
-        # Из DevTools: id полей Parton_person_dialog_<поле>_*
+        # Сначала выводим debug — какие input'ы и их id есть в карточке
+        debug_info = driver.execute_script("""
+            var result = [];
+            // Находим диалог карточки
+            var titleXpath = "//*[contains(text(),'Карточка физического лица')]";
+            var te = document.evaluate(titleXpath, document, null,
+                XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+            var dialog = te;
+            for (var i = 0; i < 10 && dialog; i++) {
+                dialog = dialog.parentElement;
+                if (dialog && dialog.querySelectorAll('input[type="text"]').length >= 2) break;
+            }
+            if (!dialog) return 'no-dialog';
+
+            var inputs = dialog.querySelectorAll('input[type="text"]');
+            for (var i = 0; i < inputs.length; i++) {
+                var el = inputs[i];
+                if (el.offsetParent === null) continue;
+                var row = {
+                    index: i,
+                    id: el.id,
+                    readonly: el.readOnly,
+                    placeholder: el.placeholder || '',
+                    parentId: el.parentElement ? el.parentElement.id : '',
+                    grandparentId: el.parentElement && el.parentElement.parentElement ? el.parentElement.parentElement.id : ''
+                };
+                result.push(row);
+            }
+            return JSON.stringify(result);
+        """)
+        print(f"    Debug inputs в карточке: {debug_info}")
+
+        # Заполняем поля. Пробуем:
+        # 1) Через id (если есть ожидаемые ключевые слова)
+        # 2) По порядку внутри диалога (первые 4 non-readonly input = ФИО+должность)
         fields = [
-            ("Фамилия", surname, "surname"),
-            ("Имя", first_name, "firstname"),
-            ("Отчество", middle_name, "middle"),
-            ("Должность", "ФЛ", "position"),
+            ("Фамилия", surname, ["surname", "famil", "lastname"]),
+            ("Имя", first_name, ["firstname", "first_name", "imya", "_name_"]),
+            ("Отчество", middle_name, ["middle", "otchestvo", "patronym"]),
+            ("Должность", "ФЛ", ["position", "post", "dolzhnost"]),
         ]
-        for label_text, value, id_part in fields:
+
+        for idx, (label_text, value, id_keywords) in enumerate(fields):
             result = driver.execute_script("""
-                var idPart = arguments[0];
+                var idKeywords = arguments[0];
                 var value = arguments[1];
+                var orderIdx = arguments[2];
 
-                // Ищем все элементы с id содержащим Parton_person_dialog + ключевое слово
-                var selector = "[id*='Parton_person_dialog'][id*='" + idPart + "']";
-                var els = document.querySelectorAll(selector);
+                // Находим диалог карточки
+                var titleXpath = "//*[contains(text(),'Карточка физического лица')]";
+                var te = document.evaluate(titleXpath, document, null,
+                    XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+                var dialog = te;
+                for (var i = 0; i < 10 && dialog; i++) {
+                    dialog = dialog.parentElement;
+                    if (dialog && dialog.querySelectorAll('input[type="text"]').length >= 2) break;
+                }
+                if (!dialog) return 'no-dialog';
 
-                for (var i = 0; i < els.length; i++) {
-                    var el = els[i];
-                    if (el.offsetParent === null) continue;
+                // Все видимые не-readonly input'ы в карточке
+                var allInputs = dialog.querySelectorAll('input[type="text"]');
+                var inputs = [];
+                for (var i = 0; i < allInputs.length; i++) {
+                    var e = allInputs[i];
+                    if (e.offsetParent !== null && !e.readOnly) inputs.push(e);
+                }
 
-                    // Если сам элемент input — используем его
-                    var inp = null;
-                    if (el.tagName.toLowerCase() === 'input') {
-                        inp = el;
-                    } else {
-                        // Иначе ищем input внутри контейнера
-                        var inputs = el.querySelectorAll('input[type="text"]');
-                        for (var j = 0; j < inputs.length; j++) {
-                            if (inputs[j].offsetParent !== null && !inputs[j].readOnly) {
-                                inp = inputs[j];
-                                break;
-                            }
+                // Стратегия 1: по id с ключевыми словами
+                for (var ki = 0; ki < idKeywords.length; ki++) {
+                    var kw = idKeywords[ki].toLowerCase();
+                    for (var ii = 0; ii < inputs.length; ii++) {
+                        var el = inputs[ii];
+                        var idStr = (el.id || '').toLowerCase();
+                        var parentIdStr = el.parentElement ? (el.parentElement.id || '').toLowerCase() : '';
+                        var gpIdStr = el.parentElement && el.parentElement.parentElement
+                            ? (el.parentElement.parentElement.id || '').toLowerCase() : '';
+                        if (idStr.includes(kw) || parentIdStr.includes(kw) || gpIdStr.includes(kw)) {
+                            el.focus();
+                            el.value = value;
+                            el.dispatchEvent(new Event('input', {bubbles: true}));
+                            el.dispatchEvent(new Event('change', {bubbles: true}));
+                            el.dispatchEvent(new Event('blur', {bubbles: true}));
+                            return 'ok-by-id:' + (el.id || '?');
                         }
                     }
+                }
 
-                    if (inp) {
-                        inp.focus();
-                        inp.value = value;
-                        inp.dispatchEvent(new Event('input', {bubbles: true}));
-                        inp.dispatchEvent(new Event('change', {bubbles: true}));
-                        inp.dispatchEvent(new Event('blur', {bubbles: true}));
-                        return 'ok:' + (inp.id || el.id || '?');
-                    }
+                // Стратегия 2: по порядку (fallback)
+                if (orderIdx < inputs.length) {
+                    var el = inputs[orderIdx];
+                    el.focus();
+                    el.value = value;
+                    el.dispatchEvent(new Event('input', {bubbles: true}));
+                    el.dispatchEvent(new Event('change', {bubbles: true}));
+                    el.dispatchEvent(new Event('blur', {bubbles: true}));
+                    return 'ok-by-order:' + (el.id || '?');
                 }
                 return 'not-found';
-            """, id_part, value)
+            """, id_keywords, value, idx)
 
             if result.startswith('ok'):
                 print(f"      ОК {label_text}: {value}  [{result}]")
