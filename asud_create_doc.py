@@ -1544,7 +1544,7 @@ def create_one_document(driver, doc_data, index, total):
             yes_btn = None
             for attempt in range(10):
                 try:
-                    # Точный id из DevTools
+                    # 1) Точный id
                     try:
                         btn = driver.find_element(By.ID, "confirm_dialog_btn_yes")
                         if btn.is_displayed():
@@ -1552,7 +1552,16 @@ def create_one_document(driver, doc_data, index, total):
                             break
                     except Exception:
                         pass
-                    # Фоллбэк по тексту "Да"
+                    # 2) Подстрока id (на случай префикса/суффикса)
+                    try:
+                        btn = driver.find_element(By.CSS_SELECTOR,
+                            "[id*='confirm_dialog_btn_yes'], [id*='confirm'][id*='yes']")
+                        if btn.is_displayed():
+                            yes_btn = btn
+                            break
+                    except Exception:
+                        pass
+                    # 3) По тексту "Да" — но только в видимом диалоге подтверждения
                     btns = driver.find_elements(By.XPATH,
                         "//*[normalize-space(text())='Да']")
                     for b in btns:
@@ -1566,7 +1575,37 @@ def create_one_document(driver, doc_data, index, total):
                 time.sleep(1)
 
             if yes_btn:
-                js_click(driver, yes_btn, "Да (подтверждение)")
+                # Настойчивый клик: ActionChains → JS → Enter
+                clicked = False
+                try:
+                    driver.execute_script(
+                        "arguments[0].scrollIntoView({block:'center'});", yes_btn)
+                    time.sleep(0.3)
+                    ActionChains(driver).move_to_element(yes_btn).pause(0.3).click().perform()
+                    print(f"    Клик 'Да' (ActionChains): id={yes_btn.get_attribute('id')}")
+                    clicked = True
+                except Exception:
+                    pass
+                if not clicked:
+                    try:
+                        driver.execute_script("arguments[0].click();", yes_btn)
+                        print(f"    Клик 'Да' (JS)")
+                        clicked = True
+                    except Exception:
+                        pass
+                if not clicked:
+                    try:
+                        yes_btn.click()
+                        print(f"    Клик 'Да' (native)")
+                        clicked = True
+                    except Exception:
+                        pass
+                # Плюс Enter как последний резерв — многие диалоги принимают его
+                if clicked:
+                    try:
+                        ActionChains(driver).send_keys(Keys.ENTER).perform()
+                    except Exception:
+                        pass
                 time.sleep(3)
                 print(f"  ОК Документ {index}/{total} отправлен НА РЕЗОЛЮЦИЮ!")
             else:
