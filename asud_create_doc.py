@@ -1544,22 +1544,15 @@ def create_one_document(driver, doc_data, index, total):
             yes_btn = None
             for attempt in range(10):
                 try:
-                    # По id (ConfirmBox, confirm-dialog, dialog-btn-yes и т.п.)
-                    for selector in [
-                        "[id*='ConfirmBox'][id*='yes']",
-                        "[id*='confirm'][id*='yes']",
-                        "[id*='dialog-btn-yes']",
-                    ]:
-                        try:
-                            btn = driver.find_element(By.CSS_SELECTOR, selector)
-                            if btn.is_displayed():
-                                yes_btn = btn
-                                break
-                        except Exception:
-                            continue
-                    if yes_btn:
-                        break
-                    # По тексту "Да"
+                    # Точный id из DevTools
+                    try:
+                        btn = driver.find_element(By.ID, "confirm_dialog_btn_yes")
+                        if btn.is_displayed():
+                            yes_btn = btn
+                            break
+                    except Exception:
+                        pass
+                    # Фоллбэк по тексту "Да"
                     btns = driver.find_elements(By.XPATH,
                         "//*[normalize-space(text())='Да']")
                     for b in btns:
