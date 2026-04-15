@@ -1493,6 +1493,7 @@ def create_one_document(driver, doc_data, index, total):
 
     if answer in ("да", "д", "y", "yes", "да.", ""):
         print("  Регистрирую...")
+        registered = False
         try:
             reg_btn = WebDriverWait(driver, TIMEOUT).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR,
@@ -1501,6 +1502,7 @@ def create_one_document(driver, doc_data, index, total):
             js_click(driver, reg_btn, "Зарегистрировать")
             time.sleep(3)
             print(f"  ОК Документ {index}/{total} ЗАРЕГИСТРИРОВАН!")
+            registered = True
         except Exception:
             try:
                 btn = driver.find_element(By.XPATH,
@@ -1508,8 +1510,44 @@ def create_one_document(driver, doc_data, index, total):
                 js_click(driver, btn, "Зарегистрировать (fallback)")
                 time.sleep(3)
                 print(f"  ОК Документ {index}/{total} ЗАРЕГИСТРИРОВАН!")
+                registered = True
             except Exception as e:
                 print(f"  !! Кнопка 'Зарегистрировать' не найдена: {e}")
+
+        # После регистрации появляется кнопка "На резолюцию" — кликаем её
+        if registered:
+            print("  Жду появления 'На резолюцию'...")
+            resolution_btn = None
+            for attempt in range(10):  # до 10 сек
+                try:
+                    # По id
+                    try:
+                        btn = driver.find_element(By.CSS_SELECTOR,
+                            "[id*='header-action-btn-send'], [id*='resolution'], [id*='na_rezoluciyu']")
+                        if btn.is_displayed():
+                            resolution_btn = btn
+                            break
+                    except Exception:
+                        pass
+                    # По тексту
+                    btns = driver.find_elements(By.XPATH,
+                        "//*[contains(text(),'На резолюцию')]")
+                    for b in btns:
+                        if b.is_displayed():
+                            resolution_btn = b
+                            break
+                    if resolution_btn:
+                        break
+                except Exception:
+                    pass
+                time.sleep(1)
+
+            if resolution_btn:
+                js_click(driver, resolution_btn, "На резолюцию")
+                time.sleep(3)
+                print(f"  ОК Документ {index}/{total} отправлен НА РЕЗОЛЮЦИЮ!")
+            else:
+                print(f"  ! Кнопка 'На резолюцию' не появилась за 10 сек")
     elif answer in ("пропустить", "skip", "п"):
         print(f"  Документ {index}/{total} пропущен — переходим к следующему без регистрации")
     else:
