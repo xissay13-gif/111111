@@ -401,25 +401,34 @@ def create_correspondent(driver, person_name):
             close_open_modals(driver)
             return
 
-        time.sleep(2)
-
-        # Вместо клика по dropdown — используем кнопку "Создать организацию"
-        # (id примерно Parton_organization_dialog_create_custom_org_button)
+        # Ждём появления кнопки "Создать организацию" — она появляется
+        # с задержкой ~1 сек после ввода фамилии (autocomplete обрабатывает)
+        print("    Жду появления кнопки 'Создать организацию'...")
         create_org_btn = None
-        try:
-            create_org_btn = driver.find_element(By.CSS_SELECTOR,
-                "[id*='create_custom_org'], [id*='custom_org_button']")
-        except Exception:
-            pass
+        for attempt in range(10):  # до 10 сек
+            try:
+                # 1) По id
+                try:
+                    btn = driver.find_element(By.CSS_SELECTOR,
+                        "[id*='create_custom_org'], [id*='custom_org_button']")
+                    if btn.is_displayed():
+                        create_org_btn = btn
+                        break
+                except Exception:
+                    pass
 
-        if not create_org_btn:
-            # Фоллбэк по тексту
-            btns = driver.find_elements(By.XPATH,
-                "//*[contains(text(),'Создать организацию')] | //*[contains(text(),'Создать')]")
-            for b in btns:
-                if b.is_displayed():
-                    create_org_btn = b
+                # 2) По тексту
+                btns = driver.find_elements(By.XPATH,
+                    "//*[contains(text(),'Создать организацию')]")
+                for b in btns:
+                    if b.is_displayed():
+                        create_org_btn = b
+                        break
+                if create_org_btn:
                     break
+            except Exception:
+                pass
+            time.sleep(1)
 
         if create_org_btn:
             js_click(driver, create_org_btn, "Создать организацию")
