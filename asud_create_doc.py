@@ -565,96 +565,87 @@ def create_correspondent(driver, person_name):
     # ШАГ 5: Заполнить карточку физ. лица и нажать "Добавить"
     print("    [5/7] Заполнение карточки физ. лица...")
     try:
-        # Заполняем поля карточки через id (из DevTools):
-        # Parton_person_dialog_surname_*, _firstname_*, _middle_*, _position_*
-        # Если не находим по id — fallback на JS поиск внутри активной модалки
+        # Находим диалог "Карточка физического лица" по заголовку и работаем
+        # только внутри него. Это надёжнее чем z-index или id.
         fields = [
-            ("Фамилия", surname, ["surname", "familia", "lastname"]),
-            ("Имя", first_name, ["firstname", "name", "imya"]),
-            ("Отчество", middle_name, ["middle", "otchestvo", "patronymic"]),
-            ("Должность", "ФЛ", ["position", "dolzhnost", "post"]),
+            ("Фамилия", surname),
+            ("Имя", first_name),
+            ("Отчество", middle_name),
+            ("Должность", "ФЛ"),
         ]
-        for label_text, value, id_keywords in fields:
-            # 1) Ищем по id с ключевыми словами в контексте Parton_person_dialog
-            inp = None
-            for kw in id_keywords:
-                try:
-                    selector = f"[id*='Parton_person_dialog'][id*='{kw}']"
-                    els = driver.find_elements(By.CSS_SELECTOR, selector)
-                    for e in els:
-                        if e.tag_name.lower() == 'input' and e.is_displayed():
-                            inp = e
-                            break
-                    if inp:
-                        break
-                except Exception:
-                    continue
+        for label_text, value in fields:
+            # Всё в одной JS-операции: найти диалог карточки,
+            # в нём найти лейбл, рядом input, ввести значение
+            result = driver.execute_script("""
+                var labelText = arguments[0];
+                var value = arguments[1];
 
-            # 2) Fallback: JS-поиск input в последней (верхней) открытой модалке
-            # рядом с лейблом label_text
-            if not inp:
-                try:
-                    js_find_and_type = driver.execute_script("""
-                        var labelText = arguments[0];
-                        var value = arguments[1];
-                        // Ищем видимые модалки, берём САМУЮ ВЕРХНЮЮ (по z-index)
-                        var modals = document.querySelectorAll('div[class*="ModalPanel"]');
-                        var topModal = null, topZ = -1;
-                        for (var m of modals) {
-                            if (m.offsetParent === null) continue;
-                            var z = parseInt(window.getComputedStyle(m).zIndex) || 0;
-                            if (z > topZ) { topZ = z; topModal = m; }
-                        }
-                        var root = topModal ? topModal.parentElement : document;
-                        // В этой области ищем лейбл
-                        var xpath = ".//*[normalize-space(text())='" + labelText + "']";
-                        var result = document.evaluate(xpath, root, null,
-                            XPathResult.ORDERED_NODE_ITERATOR_TYPE, null);
-                        var labels = [];
-                        var node;
-                        while ((node = result.iterateNext()) !== null) {
-                            if (node.offsetParent !== null) labels.push(node);
-                        }
-                        // Для каждого лейбла ищем input рядом
-                        for (var li = 0; li < labels.length; li++) {
-                            var parent = labels[li];
-                            for (var lvl = 0; lvl < 6; lvl++) {
-                                parent = parent.parentElement;
-                                if (!parent) break;
-                                var inputs = parent.querySelectorAll('input[type="text"]');
-                                for (var i = 0; i < inputs.length; i++) {
-                                    var el = inputs[i];
-                                    if (el.offsetParent !== null && !el.readOnly) {
-                                        el.focus();
-                                        el.value = value;
-                                        el.dispatchEvent(new Event('input', {bubbles: true}));
-                                        el.dispatchEvent(new Event('change', {bubbles: true}));
-                                        return 'ok';
-                                    }
-                                }
+                // 1) Найти диалог "Карточка физического лица" по тексту заголовка
+                var titleXpath = "//*[contains(text(),'Карточка физического лица')]";
+                var titleEls = document.evaluate(titleXpath, document, null,
+                    XPathResult.ORDERED_NODE_ITERATOR_TYPE, null);
+                var titleEl = null, tn;
+                while ((tn = titleEls.iterateNext()) !== null) {
+                    if (tn.offsetParent !== null) { titleEl = tn; break; }
+                }
+                if (!titleEl) return 'no-title';
+
+                // Поднимаемся до контейнера диалога (ищем ближайшего предка-диалог)
+                var dialog = titleEl;
+                for (var i = 0; i < 10; i++) {
+                    dialog = dialog.parentElement;
+                    if (!dialog) return 'no-dialog';
+                    // Предок-контейнер где есть все поля
+                    if (dialog.querySelectorAll('input[type="text"]').length >= 2) break;
+                }
+
+                // 2) Ищем лейбл внутри этого диалога
+                var xpath = ".//*[contains(normalize-space(.), '" + labelText + "')]";
+                var result = document.evaluate(xpath, dialog, null,
+                    XPathResult.ORDERED_NODE_ITERATOR_TYPE, null);
+                var labels = [];
+                var node;
+                while ((node = result.iterateNext()) !== null) {
+                    var t = (node.textContent || '').trim();
+                    // Берём только элементы где текст МАКСИМАЛЬНО близок к искомому
+                    // (не контейнер с множеством других элементов)
+                    if (node.offsetParent === null) continue;
+                    if (node.children.length > 3) continue;  // пропускаем большие контейнеры
+                    if (t.length > 30) continue;  // слишком длинный — скорее всего не лейбл
+                    if (t.includes(labelText)) labels.push(node);
+                }
+                if (labels.length === 0) return 'no-label';
+
+                // 3) Для каждого лейбла ищем input рядом (в родителях)
+                for (var li = 0; li < labels.length; li++) {
+                    var parent = labels[li];
+                    for (var lvl = 0; lvl < 8; lvl++) {
+                        parent = parent.parentElement;
+                        if (!parent || parent === dialog.parentElement) break;
+                        var inputs = parent.querySelectorAll('input[type="text"]');
+                        for (var i = 0; i < inputs.length; i++) {
+                            var el = inputs[i];
+                            if (el.offsetParent !== null && !el.readOnly) {
+                                // Проверяем что этот input В ДИАЛОГЕ (не вне его)
+                                if (!dialog.contains(el)) continue;
+                                el.focus();
+                                el.value = value;
+                                el.dispatchEvent(new Event('input', {bubbles: true}));
+                                el.dispatchEvent(new Event('change', {bubbles: true}));
+                                el.dispatchEvent(new Event('blur', {bubbles: true}));
+                                return 'ok';
                             }
                         }
-                        return 'not-found';
-                    """, label_text, value)
-                    if js_find_and_type == 'ok':
-                        print(f"      ОК {label_text}: {value} (JS)")
-                    else:
-                        print(f"    !! Поле '{label_text}' не найдено ({js_find_and_type})")
-                    continue
-                except Exception as e:
-                    print(f"    !! Ошибка JS для '{label_text}': {e}")
-                    continue
+                    }
+                }
+                return 'no-input';
+            """, label_text, value)
 
-            # Нашли input по id — вводим стандартным способом
-            try:
-                inp.click()
-                time.sleep(0.2)
-                inp.clear()
-                inp.send_keys(value)
-                time.sleep(0.3)
+            if result == 'ok':
                 print(f"      ОК {label_text}: {value}")
-            except Exception as e:
-                print(f"      !! Ошибка ввода {label_text}: {e}")
+            else:
+                print(f"      !! Поле '{label_text}' не заполнено ({result})")
+            time.sleep(0.3)
 
         # Нажимаем "Добавить" в карточке физ. лица
         save_btn = None
