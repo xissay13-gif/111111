@@ -1484,75 +1484,63 @@ def create_one_document(driver, doc_data, index, total):
         attach_content(driver, doc_data["файл"])
         wait_modal_closed(driver)
 
-    # ШАГ 7: Зарегистрировать — спрашиваем у пользователя
-    print(f"\n[7/7] Документ {index}/{total} готов.")
+    # ШАГ 7: Зарегистрировать + На резолюцию (бесперебойно)
+    print(f"\n[7/7] Документ {index}/{total} — регистрирую...")
     print(f"  Содержание: {doc_data['содержание'][:60]}...")
     print(f"  Корреспондент: {doc_data['корреспондент']}")
-    print()
-    answer = input("  Зарегистрировать документ и перейти к следующему? (да/нет/пропустить): ").strip().lower()
 
-    if answer in ("да", "д", "y", "yes", "да.", ""):
-        print("  Регистрирую...")
-        registered = False
+    registered = False
+    try:
+        reg_btn = WebDriverWait(driver, TIMEOUT).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR,
+                "#header-action-btn-register, [id*='header-action-btn-register']"))
+        )
+        js_click(driver, reg_btn, "Зарегистрировать")
+        time.sleep(3)
+        print(f"  ОК Документ {index}/{total} ЗАРЕГИСТРИРОВАН!")
+        registered = True
+    except Exception:
         try:
-            reg_btn = WebDriverWait(driver, TIMEOUT).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR,
-                    "#header-action-btn-register, [id*='header-action-btn-register']"))
-            )
-            js_click(driver, reg_btn, "Зарегистрировать")
+            btn = driver.find_element(By.XPATH,
+                "//div[contains(text(),'Зарегистрировать')]")
+            js_click(driver, btn, "Зарегистрировать (fallback)")
             time.sleep(3)
             print(f"  ОК Документ {index}/{total} ЗАРЕГИСТРИРОВАН!")
             registered = True
-        except Exception:
-            try:
-                btn = driver.find_element(By.XPATH,
-                    "//div[contains(text(),'Зарегистрировать')]")
-                js_click(driver, btn, "Зарегистрировать (fallback)")
-                time.sleep(3)
-                print(f"  ОК Документ {index}/{total} ЗАРЕГИСТРИРОВАН!")
-                registered = True
-            except Exception as e:
-                print(f"  !! Кнопка 'Зарегистрировать' не найдена: {e}")
+        except Exception as e:
+            print(f"  !! Кнопка 'Зарегистрировать' не найдена: {e}")
 
-        # После регистрации появляется кнопка "На резолюцию" — кликаем её
-        if registered:
-            print("  Жду появления 'На резолюцию'...")
-            resolution_btn = None
-            for attempt in range(10):  # до 10 сек
+    # После регистрации — кнопка "На резолюцию"
+    if registered:
+        print("  Жду появления 'На резолюцию'...")
+        resolution_btn = None
+        for attempt in range(10):
+            try:
                 try:
-                    # По id
-                    try:
-                        btn = driver.find_element(By.ID, "header-action-btn-send_on_resolution")
-                        if btn.is_displayed():
-                            resolution_btn = btn
-                            break
-                    except Exception:
-                        pass
-                    # По тексту
-                    btns = driver.find_elements(By.XPATH,
-                        "//*[contains(text(),'На резолюцию')]")
-                    for b in btns:
-                        if b.is_displayed():
-                            resolution_btn = b
-                            break
-                    if resolution_btn:
+                    btn = driver.find_element(By.ID, "header-action-btn-send_on_resolution")
+                    if btn.is_displayed():
+                        resolution_btn = btn
                         break
                 except Exception:
                     pass
-                time.sleep(1)
+                btns = driver.find_elements(By.XPATH,
+                    "//*[contains(text(),'На резолюцию')]")
+                for b in btns:
+                    if b.is_displayed():
+                        resolution_btn = b
+                        break
+                if resolution_btn:
+                    break
+            except Exception:
+                pass
+            time.sleep(1)
 
-            if resolution_btn:
-                js_click(driver, resolution_btn, "На резолюцию")
-                time.sleep(3)
-                print(f"  ОК Документ {index}/{total} отправлен НА РЕЗОЛЮЦИЮ!")
-            else:
-                print(f"  ! Кнопка 'На резолюцию' не появилась за 10 сек")
-    elif answer in ("пропустить", "skip", "п"):
-        print(f"  Документ {index}/{total} пропущен — переходим к следующему без регистрации")
-    else:
-        # "нет" — останавливаемся, даём пользователю поработать руками
-        print(f"  Документ {index}/{total} оставлен на регистрацию вручную.")
-        input("  Когда закончите с этим документом — нажмите Enter для перехода к следующему...")
+        if resolution_btn:
+            js_click(driver, resolution_btn, "На резолюцию")
+            time.sleep(3)
+            print(f"  ОК Документ {index}/{total} отправлен НА РЕЗОЛЮЦИЮ!")
+        else:
+            print(f"  ! Кнопка 'На резолюцию' не появилась за 10 сек")
 
     # Возвращаемся на главную для следующего документа
     time.sleep(2)
