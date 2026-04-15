@@ -1341,9 +1341,13 @@ def create_one_document(driver, doc_data, index, total):
     fill_corr_date(driver)
     time.sleep(0.5)
 
-    # --- Адресат (Басманов) ---
-    print("\n  Адресат:")
+    # --- Адресаты (Басманов + Халецкая) ---
+    print("\n  Адресат 1:")
     add_addressee(driver, "Басманов Александр Владимирович")
+    time.sleep(0.5)
+
+    print("\n  Адресат 2:")
+    add_addressee(driver, "Халецкая Юлия Владимировна")
     time.sleep(0.5)
 
     # --- Способ получения ---
@@ -1380,39 +1384,12 @@ def create_one_document(driver, doc_data, index, total):
 
     # ШАГ 6: Присоединить содержимое
     if doc_data.get("файл"):
-        print("\n[6/8] Присоединение содержимого...")
+        print("\n[6/7] Присоединение содержимого...")
         attach_content(driver, doc_data["файл"])
         wait_modal_closed(driver)
 
-    # ШАГ 7: Вкладка "Рассылка" — добавить Халецкую
-    print("\n[7/9] Рассылка — добавить Халецкую...")
-    go_to_distribution_tab(driver)
-    add_distribution_addressee(driver, "Халецкая Юлия Владимировна")
-    time.sleep(1)
-
-    # ШАГ 8: Сохранить после рассылки
-    print("\n[8/9] Сохранение после рассылки...")
-    try:
-        save_btn = None
-        try:
-            save_btn = WebDriverWait(driver, TIMEOUT).until(
-                EC.element_to_be_clickable((By.ID, "header-save-btn"))
-            )
-        except Exception:
-            btns = driver.find_elements(By.XPATH,
-                "//*[normalize-space(text())='Сохранить']")
-            for b in btns:
-                if b.is_displayed():
-                    save_btn = b
-                    break
-        if save_btn:
-            js_click(driver, save_btn, "Сохранить")
-            time.sleep(3)
-    except Exception:
-        pass
-
-    # ШАГ 9: Зарегистрировать — спрашиваем у пользователя
-    print(f"\n[9/9] Документ {index}/{total} готов.")
+    # ШАГ 7: Зарегистрировать — спрашиваем у пользователя
+    print(f"\n[7/7] Документ {index}/{total} готов.")
     print(f"  Содержание: {doc_data['содержание'][:60]}...")
     print(f"  Корреспондент: {doc_data['корреспондент']}")
     print()
