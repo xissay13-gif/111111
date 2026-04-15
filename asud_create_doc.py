@@ -1522,8 +1522,7 @@ def create_one_document(driver, doc_data, index, total):
                 try:
                     # По id
                     try:
-                        btn = driver.find_element(By.CSS_SELECTOR,
-                            "[id*='header-action-btn-send'], [id*='resolution'], [id*='na_rezoluciyu']")
+                        btn = driver.find_element(By.ID, "header-action-btn-send_on_resolution")
                         if btn.is_displayed():
                             resolution_btn = btn
                             break
