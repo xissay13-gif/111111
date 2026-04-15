@@ -403,39 +403,65 @@ def create_correspondent(driver, person_name):
 
         time.sleep(2)
 
-        # Выбираем вариант с точной фамилией (первый где текст == surname)
-        target = None
-        candidates = driver.find_elements(By.XPATH,
-            f"//*[contains(text(),'{surname}')]")
-        for c in candidates:
-            try:
-                if not c.is_displayed() or c == org_input:
-                    continue
-                if c.tag_name.lower() == 'input':
-                    continue
-                text = c.text.strip()
-                # Берём вариант с точно одной фамилией (без "ФЛ" / "ИП" и прочего)
-                if text == surname:
-                    target = c
+        # Вместо клика по dropdown — используем кнопку "Создать организацию"
+        # (id примерно Parton_organization_dialog_create_custom_org_button)
+        create_org_btn = None
+        try:
+            create_org_btn = driver.find_element(By.CSS_SELECTOR,
+                "[id*='create_custom_org'], [id*='custom_org_button']")
+        except Exception:
+            pass
+
+        if not create_org_btn:
+            # Фоллбэк по тексту
+            btns = driver.find_elements(By.XPATH,
+                "//*[contains(text(),'Создать организацию')] | //*[contains(text(),'Создать')]")
+            for b in btns:
+                if b.is_displayed():
+                    create_org_btn = b
                     break
-            except Exception:
-                continue
-        # Если точного нет — берём первый с фамилией
-        if not target:
+
+        if create_org_btn:
+            js_click(driver, create_org_btn, "Создать организацию")
+            print(f"    ОК Организация создана: {surname}")
+            time.sleep(1)
+        else:
+            # Старый fallback — выбор из dropdown
+            print("    ! Кнопка 'Создать организацию' не найдена, пробую dropdown...")
+            target = None
+            candidates = driver.find_elements(By.XPATH,
+                f"//*[contains(text(),'{surname}')]")
             for c in candidates:
                 try:
-                    if c.is_displayed() and c != org_input and c.tag_name.lower() != 'input':
+                    if not c.is_displayed():
+                        continue
+                    if c.tag_name.lower() == 'input':
+                        continue
+                    text = c.text.strip()
+                    if text == surname:
                         target = c
                         break
                 except Exception:
                     continue
-        if target:
-            driver.execute_script(
-                "arguments[0].scrollIntoView({block: 'center'});", target)
-            time.sleep(0.3)
-            ActionChains(driver).move_to_element(target).pause(0.3).click().perform()
-            time.sleep(1)
-            print(f"    ОК Организация выбрана: {target.text.strip()[:60]}")
+            if not target:
+                for c in candidates:
+                    try:
+                        if c.is_displayed() and c.tag_name.lower() != 'input':
+                            target = c
+                            break
+                    except Exception:
+                        continue
+            if target:
+                driver.execute_script(
+                    "arguments[0].scrollIntoView({block: 'center'});", target)
+                time.sleep(0.3)
+                ActionChains(driver).move_to_element(target).pause(0.3).click().perform()
+                time.sleep(1)
+                print(f"    ОК Организация выбрана: {target.text.strip()[:60]}")
+            else:
+                print("    !! Ни кнопки 'Создать', ни варианта в списке не найдено")
+                close_open_modals(driver)
+                return
     except Exception as e:
         print(f"    !! Ошибка шаг 3: {e}")
         close_open_modals(driver)
