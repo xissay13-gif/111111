@@ -565,17 +565,87 @@ def create_correspondent(driver, person_name):
     # ШАГ 5: Заполнить карточку физ. лица и нажать "Добавить"
     print("    [5/7] Заполнение карточки физ. лица...")
     try:
-        fields = {
-            "Фамилия": surname,
-            "Имя": first_name,
-            "Отчество": middle_name,
-            "Должность": "ФЛ",
-        }
-        for label_text, value in fields.items():
-            inp = find_input_near_label(driver, label_text)
+        # Заполняем поля карточки через id (из DevTools):
+        # Parton_person_dialog_surname_*, _firstname_*, _middle_*, _position_*
+        # Если не находим по id — fallback на JS поиск внутри активной модалки
+        fields = [
+            ("Фамилия", surname, ["surname", "familia", "lastname"]),
+            ("Имя", first_name, ["firstname", "name", "imya"]),
+            ("Отчество", middle_name, ["middle", "otchestvo", "patronymic"]),
+            ("Должность", "ФЛ", ["position", "dolzhnost", "post"]),
+        ]
+        for label_text, value, id_keywords in fields:
+            # 1) Ищем по id с ключевыми словами в контексте Parton_person_dialog
+            inp = None
+            for kw in id_keywords:
+                try:
+                    selector = f"[id*='Parton_person_dialog'][id*='{kw}']"
+                    els = driver.find_elements(By.CSS_SELECTOR, selector)
+                    for e in els:
+                        if e.tag_name.lower() == 'input' and e.is_displayed():
+                            inp = e
+                            break
+                    if inp:
+                        break
+                except Exception:
+                    continue
+
+            # 2) Fallback: JS-поиск input в последней (верхней) открытой модалке
+            # рядом с лейблом label_text
             if not inp:
-                print(f"    !! Поле '{label_text}' не найдено")
-                continue
+                try:
+                    js_find_and_type = driver.execute_script("""
+                        var labelText = arguments[0];
+                        var value = arguments[1];
+                        // Ищем видимые модалки, берём САМУЮ ВЕРХНЮЮ (по z-index)
+                        var modals = document.querySelectorAll('div[class*="ModalPanel"]');
+                        var topModal = null, topZ = -1;
+                        for (var m of modals) {
+                            if (m.offsetParent === null) continue;
+                            var z = parseInt(window.getComputedStyle(m).zIndex) || 0;
+                            if (z > topZ) { topZ = z; topModal = m; }
+                        }
+                        var root = topModal ? topModal.parentElement : document;
+                        // В этой области ищем лейбл
+                        var xpath = ".//*[normalize-space(text())='" + labelText + "']";
+                        var result = document.evaluate(xpath, root, null,
+                            XPathResult.ORDERED_NODE_ITERATOR_TYPE, null);
+                        var labels = [];
+                        var node;
+                        while ((node = result.iterateNext()) !== null) {
+                            if (node.offsetParent !== null) labels.push(node);
+                        }
+                        // Для каждого лейбла ищем input рядом
+                        for (var li = 0; li < labels.length; li++) {
+                            var parent = labels[li];
+                            for (var lvl = 0; lvl < 6; lvl++) {
+                                parent = parent.parentElement;
+                                if (!parent) break;
+                                var inputs = parent.querySelectorAll('input[type="text"]');
+                                for (var i = 0; i < inputs.length; i++) {
+                                    var el = inputs[i];
+                                    if (el.offsetParent !== null && !el.readOnly) {
+                                        el.focus();
+                                        el.value = value;
+                                        el.dispatchEvent(new Event('input', {bubbles: true}));
+                                        el.dispatchEvent(new Event('change', {bubbles: true}));
+                                        return 'ok';
+                                    }
+                                }
+                            }
+                        }
+                        return 'not-found';
+                    """, label_text, value)
+                    if js_find_and_type == 'ok':
+                        print(f"      ОК {label_text}: {value} (JS)")
+                    else:
+                        print(f"    !! Поле '{label_text}' не найдено ({js_find_and_type})")
+                    continue
+                except Exception as e:
+                    print(f"    !! Ошибка JS для '{label_text}': {e}")
+                    continue
+
+            # Нашли input по id — вводим стандартным способом
             try:
                 inp.click()
                 time.sleep(0.2)
