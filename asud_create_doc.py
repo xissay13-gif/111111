@@ -789,9 +789,10 @@ def fill_correspondent(driver, person_name):
     create_correspondent(driver, person_name)
 
 
-def fill_corr_number(driver):
-    """Заполняет поле 'Номер у корреспондента' значением 'б/н'."""
-    print("  Номер у корреспондента: б/н")
+def fill_corr_number(driver, index=None):
+    """Заполняет поле 'Номер у корреспондента' значением 'б/н (N)'."""
+    value = f"б/н ({index})" if index else "б/н"
+    print(f"  Номер у корреспондента: {value}")
 
     inp = find_input_near_label(driver, "Номер у корреспондента")
 
@@ -807,7 +808,7 @@ def fill_corr_number(driver):
         time.sleep(0.3)
         inp.clear()
         time.sleep(0.2)
-        inp.send_keys("б/н")
+        inp.send_keys(value)
         time.sleep(0.3)
         inp.send_keys(Keys.TAB)
         print("  ОК Номер заполнен")
@@ -815,11 +816,11 @@ def fill_corr_number(driver):
         # Fallback через JS
         try:
             driver.execute_script("""
-                arguments[0].value = 'б/н';
+                arguments[0].value = arguments[1];
                 arguments[0].dispatchEvent(new Event('input', {bubbles: true}));
                 arguments[0].dispatchEvent(new Event('change', {bubbles: true}));
                 arguments[0].dispatchEvent(new Event('blur', {bubbles: true}));
-            """, inp)
+            """, inp, value)
             print("  ОК Номер заполнен через JS")
         except Exception as e2:
             print(f"  !! Ошибка заполнения номера: {e2}")
@@ -1429,7 +1430,7 @@ def create_one_document(driver, doc_data, index, total):
 
     # --- Номер у корреспондента ---
     print("\n  Номер:")
-    fill_corr_number(driver)
+    fill_corr_number(driver, index)
     time.sleep(0.5)
 
     # --- Дата у корреспондента ---
