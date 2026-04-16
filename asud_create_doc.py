@@ -161,9 +161,12 @@ def load_excel(file_path):
         # обработает оба варианта и сгенерирует все возможные форматы имени.
         link = row[0]
 
+        # Отправитель из TextBody ("From: ФИО")
+        sender = _parse_sender(body) if body else ""
+
         rows.append({
             "содержание": body_clean,
-            "корреспондент": "Неизвестный Неизвестный Неизвестный",
+            "корреспондент": sender or "Не указан",
             "тема": clean_subject,  # только для лога
             "тип_индекс": type_idx,
             "тип_название": DOC_TYPE_MAP[type_idx],
@@ -362,10 +365,16 @@ def create_correspondent(driver, person_name):
       7. 'Готово'
     """
     parts = person_name.strip().split()
-    if len(parts) < 3:
-        print(f"  !! Для создания нужно 3 части ФИО, получено: {person_name}")
+    if not parts:
+        print(f"  !! Пустое ФИО корреспондента")
         return
-    surname, first_name, middle_name = parts[0], parts[1], parts[2]
+    # Гибкий разбор: если отчества/имени нет — подставляем букву "Н"
+    # (поле обязательное в АСУД, но хоть что-то)
+    surname = parts[0]
+    first_name = parts[1] if len(parts) >= 2 else "Н"
+    middle_name = parts[2] if len(parts) >= 3 else "Н"
+    if len(parts) < 3:
+        print(f"  ! Неполное ФИО '{person_name}' — недостающие части = 'Н'")
     print(f"  Создаю нового корреспондента: {surname} {first_name} {middle_name}")
 
     # ШАГ 1: Клик "+" рядом с полем Корреспондент
