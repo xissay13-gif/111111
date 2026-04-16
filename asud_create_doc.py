@@ -129,11 +129,16 @@ def load_excel(file_path):
         # Отправитель
         sender = _parse_sender(str(body) if body else '')
 
+        # Link из колонки A — дата-время как в имени .msg файла (например "16.04.2026 9-53-27")
+        link = row[0]
+        link_str = str(link).strip() if link else ""
+
         rows.append({
             "содержание": clean_subject,
             "корреспондент": sender or "Не указан",
             "тип_индекс": type_idx,
             "тип_название": DOC_TYPE_MAP[type_idx],
+            "link": link_str,
         })
     wb.close()
     print(f"Загружено писем: {len(rows)}, пропущено (Тип=0 или пустые): {skipped}")
@@ -1091,8 +1096,11 @@ def fill_delivery_method(driver):
     print("  !! 'Электронная почта' не найдена в списке")
 
 
+OUTLOOK_SUBJECTS_DIR = r"D:\OutlookSubjects"
+
+
 def get_attachment_path():
-    """Ищет .msg файл рядом с exe/скриптом."""
+    """Ищет .msg-пустышку рядом с exe/скриптом (fallback)."""
     if getattr(sys, 'frozen', False):
         base_dir = os.path.dirname(sys.executable)
     else:
@@ -1103,9 +1111,42 @@ def get_attachment_path():
         return None
     if len(msg_files) == 1:
         return os.path.join(base_dir, msg_files[0])
-    # Если несколько — берём первый, но сообщаем
-    print(f"  ! Найдено {len(msg_files)} .msg файлов, берём: {msg_files[0]}")
+    print(f"  ! Найдено {len(msg_files)} .msg файлов-пустышек, берём: {msg_files[0]}")
     return os.path.join(base_dir, msg_files[0])
+
+
+def find_msg_by_link(link, fallback_path=None):
+    """Ищет .msg файл в D:\\OutlookSubjects по имени = link.
+    Если не нашёл — возвращает fallback_path (пустышку).
+    """
+    if not link:
+        return fallback_path
+
+    if not os.path.isdir(OUTLOOK_SUBJECTS_DIR):
+        print(f"  ! Папка {OUTLOOK_SUBJECTS_DIR} не найдена — беру пустышку")
+        return fallback_path
+
+    # Ожидаемое имя файла: "{link}.msg" (например "16.04.2026 9-53-27.msg")
+    # Пробуем точное совпадение + разные варианты
+    candidates = [
+        f"{link}.msg",
+        f"{link}.MSG",
+    ]
+    for name in candidates:
+        path = os.path.join(OUTLOOK_SUBJECTS_DIR, name)
+        if os.path.isfile(path):
+            return path
+
+    # Фоллбэк: ищем по подстроке link в именах файлов
+    try:
+        for f in os.listdir(OUTLOOK_SUBJECTS_DIR):
+            if f.lower().endswith('.msg') and link in f:
+                return os.path.join(OUTLOOK_SUBJECTS_DIR, f)
+    except Exception:
+        pass
+
+    print(f"  ! Файл '{link}.msg' не найден в {OUTLOOK_SUBJECTS_DIR} — беру пустышку")
+    return fallback_path
 
 
 def wait_modal_closed(driver, timeout=15):
@@ -1544,10 +1585,14 @@ def create_one_document(driver, doc_data, index, total):
         print(f"  !! Ошибка сохранения: {e}")
 
     # ШАГ 6: Присоединить содержимое
-    if doc_data.get("файл"):
-        print("\n[6/7] Присоединение содержимого...")
-        attach_content(driver, doc_data["файл"])
+    # Ищем файл в D:\OutlookSubjects по имени = link, иначе пустышка
+    attach_path = find_msg_by_link(doc_data.get("link"), doc_data.get("файл"))
+    if attach_path:
+        print(f"\n[6/7] Присоединение содержимого: {os.path.basename(attach_path)}")
+        attach_content(driver, attach_path)
         wait_modal_closed(driver)
+    else:
+        print("\n[6/7] Нет файла для присоединения (пропускаю)")
 
     # ШАГ 7: Документ сохранён, оставляем в черновиках — закрываем карточку
     print(f"\n[7/7] Документ {index}/{total} — сохранён в черновики.")
