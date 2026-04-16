@@ -77,6 +77,33 @@ DOC_TYPE_MAP = {
 }
 
 
+def _clean_body(text):
+    """Очищает TextBody:
+    - Убирает строку про 'ВНИМАНИЕ! Письмо было отправлено внешним...'
+    - Убирает лишние пустые строки
+    - Убирает _x000D_
+    """
+    if not text:
+        return ""
+    t = str(text).replace('_x000D_', '\n')
+    # Удаляем строки начинающиеся с "ВНИМАНИЕ! Письмо было отправлено внешним"
+    # (и близкие варианты — регистр не важен)
+    lines = t.split('\n')
+    cleaned_lines = []
+    for line in lines:
+        stripped = line.strip()
+        # Пропускаем уведомление от почты
+        if _re.search(r'внимание!?\s*письмо\s+было\s+отправлено\s+внешним',
+                      stripped, _re.IGNORECASE):
+            continue
+        cleaned_lines.append(line)
+    t = '\n'.join(cleaned_lines)
+    # Схлопываем множественные пустые строки в одну
+    t = _re.sub(r'\n\s*\n\s*\n+', '\n\n', t)
+    # Убираем пробелы в начале/конце
+    return t.strip()
+
+
 def _parse_sender(body):
     """Извлекает ФИО отправителя из 'From: ...' в теле письма."""
     if not body:
@@ -126,8 +153,8 @@ def load_excel(file_path):
         clean_subject = str(subject).strip()
         clean_subject = _re.sub(r'^(FW:|RE:|Fwd:)\s*', '', clean_subject, flags=_re.IGNORECASE)
 
-        # Краткое содержание = TextBody (колонка C), очищенное от _x000D_
-        body_clean = str(body).replace('_x000D_', '\n').strip() if body else clean_subject
+        # Краткое содержание = TextBody (колонка C), очищенное от служебных строк
+        body_clean = _clean_body(body) if body else clean_subject
 
         # Link из колонки A — дата-время как в имени .msg файла (например "16.04.2026 9-53-27")
         link = row[0]
