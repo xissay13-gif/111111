@@ -1197,7 +1197,10 @@ def find_msg_by_link(link, fallback_path=None):
     """Ищет .msg файл в D:\\OutlookSubjects по имени = link.
     Если не нашёл — возвращает fallback_path (пустышку).
     """
-    if not link:
+    print(f"  [attach] link = {link!r} (тип: {type(link).__name__})")
+
+    if link is None or (isinstance(link, str) and not link.strip()):
+        print(f"  ! link пустой — беру пустышку")
         return fallback_path
 
     if not os.path.isdir(OUTLOOK_SUBJECTS_DIR):
