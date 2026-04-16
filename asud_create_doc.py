@@ -62,20 +62,81 @@ def get_driver_path():
     return driver_path
 
 
+import re as _re
+
+# Маппинг индекса из Excel → название вида в АСУД
+DOC_TYPE_MAP = {
+    1: "Указы, распоряжения Президента Российской Федерации",
+    2: "Документы Администрации Президента",
+    3: "Документы Правительства Российской Федерации",
+    4: "Документы Федеральных органов исполнительной и законодательной власти",
+    5: "Письма юридических лиц",
+    6: "Письма компаний Топливно-энергетического комплекса",
+    7: "Документы органов законодательной и исполнительной власти субъектов",
+    8: "Письма, заявления и жалобы граждан, акционеров",
+}
+
+
+def _parse_sender(body):
+    """Извлекает ФИО отправителя из 'From: ...' в теле письма."""
+    if not body:
+        return ""
+    clean = body.replace('_x000D_', '\n')
+    m = _re.search(r'From:\s*([^<\n\r]+?)(?:\s*<[^>]*>)?[\n\r]', clean)
+    if not m:
+        return ""
+    name = m.group(1).strip()
+    # Убираем разные "VASILYEVA TATIANA" варианты — только кириллица
+    return name
+
+
 def load_excel(file_path):
-    """Читает Excel и возвращает список словарей {содержание, корреспондент}."""
+    """Читает Excel и возвращает список писем.
+    Ожидаемые колонки:
+      B: Subject (тема)
+      C: TextBody (тело с From:)
+      G: Тип (0=пропустить, 1-8 = индекс вида в АСУД)
+    Строки с Тип=0 или без темы — пропускаются.
+    """
     wb = openpyxl.load_workbook(file_path, data_only=True)
     ws = wb.active
     rows = []
+    skipped = 0
     for row in ws.iter_rows(min_row=2, max_row=ws.max_row, values_only=True):
-        content = row[1]  # колонка B
-        correspondent = row[2]  # колонка C
-        if content and correspondent:
-            rows.append({
-                "содержание": str(content).strip(),
-                "корреспондент": str(correspondent).strip(),
-            })
+        if len(row) < 7:
+            skipped += 1
+            continue
+        subject = row[1]  # B
+        body = row[2]     # C
+        type_idx = row[6] # G
+
+        if not subject:
+            skipped += 1
+            continue
+        # Парсим индекс
+        try:
+            type_idx = int(type_idx) if type_idx is not None else 0
+        except (ValueError, TypeError):
+            type_idx = 0
+        if type_idx == 0 or type_idx not in DOC_TYPE_MAP:
+            skipped += 1
+            continue
+
+        # Чистим "FW: " из темы
+        clean_subject = str(subject).strip()
+        clean_subject = _re.sub(r'^(FW:|RE:|Fwd:)\s*', '', clean_subject, flags=_re.IGNORECASE)
+
+        # Отправитель
+        sender = _parse_sender(str(body) if body else '')
+
+        rows.append({
+            "содержание": clean_subject,
+            "корреспондент": sender or "Не указан",
+            "тип_индекс": type_idx,
+            "тип_название": DOC_TYPE_MAP[type_idx],
+        })
     wb.close()
+    print(f"Загружено писем: {len(rows)}, пропущено (Тип=0 или пустые): {skipped}")
     return rows
 
 
@@ -1388,11 +1449,14 @@ def create_one_document(driver, doc_data, index, total):
         "Входящий документ")
     time.sleep(1)
 
-    # ШАГ 3: Вид — Письма, заявления и жалобы граждан, акционеров
-    print("\n[3/5] Вид: Письма, заявления...")
+    # ШАГ 3: Вид — берём из doc_data (определён типом в Excel)
+    doc_subtype = doc_data.get("тип_название", "Письма, заявления и жалобы граждан, акционеров")
+    # Для поиска берём первые 30 символов — достаточно уникально
+    subtype_short = doc_subtype[:30]
+    print(f"\n[3/5] Вид: {doc_subtype}...")
     wait_and_click(driver, By.XPATH,
-        "//div[contains(text(),'Письма, заявления и жалобы граждан')] | //td[contains(text(),'Письма, заявления и жалобы граждан')]",
-        "Письма, заявления и жалобы")
+        f"//div[contains(text(),'{subtype_short}')] | //td[contains(text(),'{subtype_short}')]",
+        doc_subtype)
     time.sleep(0.5)
 
     # Кнопка "Создать документ"
