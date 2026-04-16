@@ -1543,13 +1543,9 @@ def create_one_document(driver, doc_data, index, total):
     fill_corr_date(driver)
     time.sleep(0.5)
 
-    # --- Адресаты (Басманов + Халецкая) ---
-    print("\n  Адресат 1:")
+    # --- Адресат (Басманов) ---
+    print("\n  Адресат:")
     add_addressee(driver, "Басманов Александр Владимирович")
-    time.sleep(0.5)
-
-    print("\n  Адресат 2:")
-    add_addressee(driver, "Халецкая Юлия Владимировна")
     time.sleep(0.5)
 
     # --- Способ получения ---
