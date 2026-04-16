@@ -161,12 +161,12 @@ def load_excel(file_path):
         # обработает оба варианта и сгенерирует все возможные форматы имени.
         link = row[0]
 
-        # Отправитель из TextBody ("From: ФИО")
-        sender = _parse_sender(body) if body else ""
+        # Отправитель из TextBody (не используется — пишем "Неизвестный")
+        _sender = _parse_sender(body) if body else ""
 
         rows.append({
             "содержание": body_clean,
-            "корреспондент": sender or "Не указан",
+            "корреспондент": "Неизвестный Неизвестный Неизвестный",
             "тема": clean_subject,  # только для лога
             "тип_индекс": type_idx,
             "тип_название": DOC_TYPE_MAP[type_idx],
@@ -893,9 +893,18 @@ def fill_correspondent(driver, person_name):
     create_correspondent(driver, person_name)
 
 
-def fill_corr_number(driver, index=None):
-    """Заполняет поле 'Номер у корреспондента' значением 'б/н (N)'."""
-    value = f"б/н ({index})" if index else "б/н"
+def fill_corr_number(driver, link=None):
+    """Заполняет поле 'Номер у корреспондента' значением 'б/н <link>'.
+    link — это значение из колонки A таблицы (например '16.04.2026 9-53-27').
+    Если datetime — форматируем в привычный вид."""
+    from datetime import datetime, date as _date
+    if isinstance(link, (datetime, _date)):
+        link_str = link.strftime("%d.%m.%Y %H-%M-%S")
+    elif link:
+        link_str = str(link).strip()
+    else:
+        link_str = ""
+    value = f"б/н {link_str}" if link_str else "б/н"
     print(f"  Номер у корреспондента: {value}")
 
     inp = find_input_near_label(driver, "Номер у корреспондента")
@@ -1622,7 +1631,7 @@ def create_one_document(driver, doc_data, index, total):
 
     # --- Номер у корреспондента ---
     print("\n  Номер:")
-    fill_corr_number(driver, index)
+    fill_corr_number(driver, doc_data.get("link"))
     time.sleep(0.5)
 
     # --- Дата у корреспондента ---
