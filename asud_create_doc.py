@@ -122,20 +122,21 @@ def load_excel(file_path):
             skipped += 1
             continue
 
-        # Чистим "FW: " из темы
+        # Чистим "FW: " из темы (используется только для лога)
         clean_subject = str(subject).strip()
         clean_subject = _re.sub(r'^(FW:|RE:|Fwd:)\s*', '', clean_subject, flags=_re.IGNORECASE)
 
-        # Отправитель
-        sender = _parse_sender(str(body) if body else '')
+        # Краткое содержание = TextBody (колонка C), очищенное от _x000D_
+        body_clean = str(body).replace('_x000D_', '\n').strip() if body else clean_subject
 
         # Link из колонки A — дата-время как в имени .msg файла (например "16.04.2026 9-53-27")
         link = row[0]
         link_str = str(link).strip() if link else ""
 
         rows.append({
-            "содержание": clean_subject,
-            "корреспондент": sender or "Не указан",
+            "содержание": body_clean,
+            "корреспондент": "Неизвестный Неизвестный Неизвестный",
+            "тема": clean_subject,  # только для лога
             "тип_индекс": type_idx,
             "тип_название": DOC_TYPE_MAP[type_idx],
             "link": link_str,
