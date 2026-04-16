@@ -1614,19 +1614,29 @@ def create_one_document(driver, doc_data, index, total):
         else:
             print(f"  ! Кнопка 'На резолюцию' не появилась за 10 сек")
 
-    # Закрываем карточку крестиком (быстрее чем перезагрузка сайта)
+    # Закрываем карточку крестиком (если она ещё открыта)
+    # После "На резолюцию" + "Да" карточка может закрыться автоматически
     print("  Закрываю карточку...")
     time.sleep(2)
     try:
-        close_btn = WebDriverWait(driver, 10).until(
-            EC.element_to_be_clickable((By.ID, "header-close-btn"))
-        )
-        ActionChains(driver).move_to_element(close_btn).pause(0.3).click().perform()
-        time.sleep(2)
-        print("  ОК Карточка закрыта")
+        close_btn = driver.find_element(By.ID, "header-close-btn")
+        if close_btn.is_displayed():
+            ActionChains(driver).move_to_element(close_btn).pause(0.3).click().perform()
+            time.sleep(2)
+            print("  ОК Карточка закрыта")
+        else:
+            print("  Карточка уже закрыта")
     except Exception:
-        # Фоллбэк: перезагрузка страницы
-        print("  ! Крестик не найден — перезагружаю АСУД...")
+        print("  Карточка уже закрыта")
+
+    # Проверяем что кнопка создания документа доступна (мы на главной)
+    try:
+        WebDriverWait(driver, 10).until(
+            EC.element_to_be_clickable((By.ID, "mainscreen-create-button"))
+        )
+    except Exception:
+        # Если не нашли — полная перезагрузка как fallback
+        print("  ! Главная не загрузилась — перезагружаю АСУД...")
         driver.get(ASUD_URL)
         wait_asud_loaded(driver)
 
