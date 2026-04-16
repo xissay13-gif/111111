@@ -156,9 +156,10 @@ def load_excel(file_path):
         # Краткое содержание = TextBody (колонка C), очищенное от служебных строк
         body_clean = _clean_body(body) if body else clean_subject
 
-        # Link из колонки A — дата-время как в имени .msg файла (например "16.04.2026 9-53-27")
+        # Link из колонки A — дата-время как в имени .msg файла.
+        # Сохраняем исходный объект (может быть str или datetime) — find_msg_by_link
+        # обработает оба варианта и сгенерирует все возможные форматы имени.
         link = row[0]
-        link_str = str(link).strip() if link else ""
 
         rows.append({
             "содержание": body_clean,
@@ -166,7 +167,7 @@ def load_excel(file_path):
             "тема": clean_subject,  # только для лога
             "тип_индекс": type_idx,
             "тип_название": DOC_TYPE_MAP[type_idx],
-            "link": link_str,
+            "link": link,
         })
     wb.close()
     print(f"Загружено писем: {len(rows)}, пропущено (Тип=0 или пустые): {skipped}")
@@ -1143,6 +1144,46 @@ def get_attachment_path():
     return os.path.join(base_dir, msg_files[0])
 
 
+def _link_to_variants(link):
+    """Возвращает список возможных вариантов имени файла для link.
+    Обрабатывает datetime → строку и варианты с/без ведущих нулей."""
+    from datetime import datetime, date as _date
+    variants = set()
+
+    # Если datetime/date — форматируем в разные паттерны
+    if isinstance(link, (datetime, _date)):
+        try:
+            # С ведущим нулём: "16.04.2026 09-53-27"
+            variants.add(link.strftime("%d.%m.%Y %H-%M-%S"))
+            # Без ведущего нуля: "16.04.2026 9-53-27"
+            # (кроссплатформенно — через замену)
+            with_lead = link.strftime("%d.%m.%Y %H-%M-%S")
+            # Если час начинается с 0 и не 00 — убираем лидирующий 0
+            m = _re.match(r'^(\d{2}\.\d{2}\.\d{4})\s+0(\d)-(\d{2})-(\d{2})$', with_lead)
+            if m:
+                variants.add(f"{m.group(1)} {m.group(2)}-{m.group(3)}-{m.group(4)}")
+            # ISO-формат на всякий: "2026-04-16 09:53:27"
+            variants.add(link.strftime("%Y-%m-%d %H:%M:%S"))
+            variants.add(link.strftime("%Y-%m-%d %H-%M-%S"))
+        except Exception:
+            pass
+    else:
+        s = str(link).strip()
+        if s:
+            variants.add(s)
+            # Попытаемся с/без ведущего 0 в часе
+            m = _re.match(r'^(\d{2}\.\d{2}\.\d{4})\s+(\d{1,2})-(\d{2})-(\d{2})$', s)
+            if m:
+                d, h, mn, sec = m.groups()
+                # Без ведущего нуля
+                variants.add(f"{d} {int(h)}-{mn}-{sec}")
+                # С ведущим нулём
+                variants.add(f"{d} {int(h):02d}-{mn}-{sec}")
+
+    variants.discard('')
+    return list(variants)
+
+
 def find_msg_by_link(link, fallback_path=None):
     """Ищет .msg файл в D:\\OutlookSubjects по имени = link.
     Если не нашёл — возвращает fallback_path (пустышку).
@@ -1154,26 +1195,32 @@ def find_msg_by_link(link, fallback_path=None):
         print(f"  ! Папка {OUTLOOK_SUBJECTS_DIR} не найдена — беру пустышку")
         return fallback_path
 
-    # Ожидаемое имя файла: "{link}.msg" (например "16.04.2026 9-53-27.msg")
-    # Пробуем точное совпадение + разные варианты
-    candidates = [
-        f"{link}.msg",
-        f"{link}.MSG",
-    ]
-    for name in candidates:
-        path = os.path.join(OUTLOOK_SUBJECTS_DIR, name)
-        if os.path.isfile(path):
-            return path
+    # Получаем все возможные варианты имени
+    variants = _link_to_variants(link)
+    print(f"  Ищу файл, варианты имени: {variants}")
 
-    # Фоллбэк: ищем по подстроке link в именах файлов
+    # Попытка 1: точное совпадение по любому варианту (+ .MSG / .msg)
+    for v in variants:
+        for ext in ('.msg', '.MSG'):
+            path = os.path.join(OUTLOOK_SUBJECTS_DIR, v + ext)
+            if os.path.isfile(path):
+                print(f"  ОК Нашёл: {os.path.basename(path)}")
+                return path
+
+    # Попытка 2: ищем по подстроке (любой вариант в имени файла)
     try:
-        for f in os.listdir(OUTLOOK_SUBJECTS_DIR):
-            if f.lower().endswith('.msg') and link in f:
-                return os.path.join(OUTLOOK_SUBJECTS_DIR, f)
-    except Exception:
-        pass
+        all_files = os.listdir(OUTLOOK_SUBJECTS_DIR)
+        msg_files = [f for f in all_files if f.lower().endswith('.msg')]
+        for f in msg_files:
+            for v in variants:
+                if v in f:
+                    full = os.path.join(OUTLOOK_SUBJECTS_DIR, f)
+                    print(f"  ОК Нашёл (подстрока): {f}")
+                    return full
+    except Exception as e:
+        print(f"  ! Ошибка при сканировании папки: {e}")
 
-    print(f"  ! Файл '{link}.msg' не найден в {OUTLOOK_SUBJECTS_DIR} — беру пустышку")
+    print(f"  ! Файл для link={link!r} не найден в {OUTLOOK_SUBJECTS_DIR} — беру пустышку")
     return fallback_path
 
 
