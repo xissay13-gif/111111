@@ -1614,10 +1614,21 @@ def create_one_document(driver, doc_data, index, total):
         else:
             print(f"  ! Кнопка 'На резолюцию' не появилась за 10 сек")
 
-    # Возвращаемся на главную для следующего документа
+    # Закрываем карточку крестиком (быстрее чем перезагрузка сайта)
+    print("  Закрываю карточку...")
     time.sleep(2)
-    driver.get(ASUD_URL)
-    wait_asud_loaded(driver)
+    try:
+        close_btn = WebDriverWait(driver, 10).until(
+            EC.element_to_be_clickable((By.ID, "header-close-btn"))
+        )
+        ActionChains(driver).move_to_element(close_btn).pause(0.3).click().perform()
+        time.sleep(2)
+        print("  ОК Карточка закрыта")
+    except Exception:
+        # Фоллбэк: перезагрузка страницы
+        print("  ! Крестик не найден — перезагружаю АСУД...")
+        driver.get(ASUD_URL)
+        wait_asud_loaded(driver)
 
 
 def main():
