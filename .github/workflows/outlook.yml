@@ -20,16 +20,16 @@ jobs:
 
     - name: Build EXE
       run: >
-        pyinstaller --onefile --name outlook_export
+        pyinstaller --onefile --name outlook_exporter
         --hidden-import=win32com.client
         --hidden-import=win32com
         --hidden-import=pywintypes
         --hidden-import=pythoncom
         --hidden-import=openpyxl
-        outlook_export.py
+        outlook_exporter.py
 
     - name: Upload EXE
       uses: actions/upload-artifact@v4
       with:
-        name: outlook_export
-        path: dist/outlook_export.exe
+        name: outlook_exporter
+        path: dist/outlook_exporter.exe
