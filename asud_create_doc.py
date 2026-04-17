@@ -130,12 +130,12 @@ def load_excel(file_path):
     rows = []
     skipped = 0
     for row in ws.iter_rows(min_row=2, max_row=ws.max_row, values_only=True):
-        if len(row) < 7:
+        if len(row) < 5:
             skipped += 1
             continue
-        subject = row[1]  # B
-        body = row[2]     # C
-        type_idx = row[6] # G
+        subject = row[1]   # B: Subject
+        body = row[3]      # D: TextBody
+        type_idx = row[4]  # E: Тема (тип 0/5/7/8)
 
         if not subject:
             skipped += 1
