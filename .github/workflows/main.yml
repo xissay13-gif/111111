@@ -22,7 +22,7 @@ jobs:
 
     - name: Build EXE
       run: >
-        pyinstaller --onefile --name asud_create_doc
+        pyinstaller --onefile --name auto_create_correspondent
         --hidden-import=selenium.webdriver.edge.webdriver
         --hidden-import=selenium.webdriver.edge.service
         --hidden-import=selenium.webdriver.edge.options
@@ -32,10 +32,10 @@ jobs:
         --hidden-import=openpyxl
         --hidden-import=pyautogui
         --hidden-import=pywinauto
-        asud_create_doc.py
+        auto_create_correspondent.py
 
     - name: Upload EXE
       uses: actions/upload-artifact@v4
       with:
-        name: asud_create_doc
-        path: dist/asud_create_doc.exe
+        name: auto_create_correspondent
+        path: dist/auto_create_correspondent.exe
