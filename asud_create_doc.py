@@ -1167,24 +1167,25 @@ def get_attachment_path():
 
 def _link_to_variants(link):
     """Возвращает список возможных вариантов имени файла для link.
-    Обрабатывает datetime → строку и варианты с/без ведущих нулей."""
+    Обрабатывает datetime → строку и варианты с/без ведущих нулей.
+    Форматы файлов:
+      - DD.MM.YYYY HH-MM-SS (русский)
+      - YYYY-MM-DD HH-MM-SS (ISO)
+      - с/без ведущего нуля в часе"""
     from datetime import datetime, date as _date
     variants = set()
 
-    # Если datetime/date — форматируем в разные паттерны
+    # Если datetime/date — форматируем во все паттерны
     if isinstance(link, (datetime, _date)):
         try:
-            # С ведущим нулём: "16.04.2026 09-53-27"
+            # Русский: "16.04.2026 09-53-27"
             variants.add(link.strftime("%d.%m.%Y %H-%M-%S"))
-            # Без ведущего нуля: "16.04.2026 9-53-27"
-            # (кроссплатформенно — через замену)
+            # Русский без лид. нуля: "16.04.2026 9-53-27"
             with_lead = link.strftime("%d.%m.%Y %H-%M-%S")
-            # Если час начинается с 0 и не 00 — убираем лидирующий 0
             m = _re.match(r'^(\d{2}\.\d{2}\.\d{4})\s+0(\d)-(\d{2})-(\d{2})$', with_lead)
             if m:
                 variants.add(f"{m.group(1)} {m.group(2)}-{m.group(3)}-{m.group(4)}")
-            # ISO-формат на всякий: "2026-04-16 09:53:27"
-            variants.add(link.strftime("%Y-%m-%d %H:%M:%S"))
+            # ISO: "2026-04-16 09-53-27"
             variants.add(link.strftime("%Y-%m-%d %H-%M-%S"))
         except Exception:
             pass
@@ -1192,14 +1193,22 @@ def _link_to_variants(link):
         s = str(link).strip()
         if s:
             variants.add(s)
-            # Попытаемся с/без ведущего 0 в часе
-            m = _re.match(r'^(\d{2}\.\d{2}\.\d{4})\s+(\d{1,2})-(\d{2})-(\d{2})$', s)
+            # Парсим DD.MM.YYYY HH-MM-SS → генерируем ISO и варианты
+            m = _re.match(r'^(\d{2})\.(\d{2})\.(\d{4})\s+(\d{1,2})-(\d{2})-(\d{2})$', s)
             if m:
-                d, h, mn, sec = m.groups()
-                # Без ведущего нуля
-                variants.add(f"{d} {int(h)}-{mn}-{sec}")
-                # С ведущим нулём
-                variants.add(f"{d} {int(h):02d}-{mn}-{sec}")
+                dd, mm, yyyy, h, mn, sec = m.groups()
+                # С/без ведущего нуля
+                variants.add(f"{dd}.{mm}.{yyyy} {int(h)}-{mn}-{sec}")
+                variants.add(f"{dd}.{mm}.{yyyy} {int(h):02d}-{mn}-{sec}")
+                # ISO формат
+                variants.add(f"{yyyy}-{mm}-{dd} {int(h):02d}-{mn}-{sec}")
+                variants.add(f"{yyyy}-{mm}-{dd} {int(h)}-{mn}-{sec}")
+            # Парсим ISO YYYY-MM-DD HH-MM-SS → генерируем русский
+            m = _re.match(r'^(\d{4})-(\d{2})-(\d{2})\s+(\d{1,2})-(\d{2})-(\d{2})$', s)
+            if m:
+                yyyy, mm, dd, h, mn, sec = m.groups()
+                variants.add(f"{dd}.{mm}.{yyyy} {int(h):02d}-{mn}-{sec}")
+                variants.add(f"{dd}.{mm}.{yyyy} {int(h)}-{mn}-{sec}")
 
     variants.discard('')
     return list(variants)
@@ -1208,6 +1217,7 @@ def _link_to_variants(link):
 def find_msg_by_link(link, fallback_path=None):
     """Ищет .msg файл в D:\\OutlookSubjects по имени = link.
     Если не нашёл — возвращает fallback_path (пустышку).
+    Учитывает суффиксы _1, _2 (дубликаты при скачивании).
     """
     print(f"  [attach] link = {link!r} (тип: {type(link).__name__})")
 
@@ -1221,9 +1231,9 @@ def find_msg_by_link(link, fallback_path=None):
 
     # Получаем все возможные варианты имени
     variants = _link_to_variants(link)
-    print(f"  Ищу файл, варианты имени: {variants}")
+    print(f"  Ищу файл, варианты: {variants}")
 
-    # Попытка 1: точное совпадение по любому варианту (+ .MSG / .msg)
+    # Попытка 1: точное совпадение (без суффикса)
     for v in variants:
         for ext in ('.msg', '.MSG'):
             path = os.path.join(OUTLOOK_SUBJECTS_DIR, v + ext)
@@ -1231,7 +1241,16 @@ def find_msg_by_link(link, fallback_path=None):
                 print(f"  ОК Нашёл: {os.path.basename(path)}")
                 return path
 
-    # Попытка 2: ищем по подстроке (любой вариант в имени файла)
+    # Попытка 2: с суффиксами _1, _2, ... _9
+    for v in variants:
+        for suffix in range(1, 10):
+            for ext in ('.msg', '.MSG'):
+                path = os.path.join(OUTLOOK_SUBJECTS_DIR, f"{v}_{suffix}{ext}")
+                if os.path.isfile(path):
+                    print(f"  ОК Нашёл (суффикс _{suffix}): {os.path.basename(path)}")
+                    return path
+
+    # Попытка 3: подстрока в имени файла
     try:
         all_files = os.listdir(OUTLOOK_SUBJECTS_DIR)
         msg_files = [f for f in all_files if f.lower().endswith('.msg')]
@@ -1244,7 +1263,7 @@ def find_msg_by_link(link, fallback_path=None):
     except Exception as e:
         print(f"  ! Ошибка при сканировании папки: {e}")
 
-    print(f"  ! Файл для link={link!r} не найден в {OUTLOOK_SUBJECTS_DIR} — беру пустышку")
+    print(f"  ! Файл для link={link!r} не найден — беру пустышку")
     return fallback_path
 
 
