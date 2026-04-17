@@ -96,6 +96,9 @@ def _clean_body(text):
         if _re.search(r'внимание!?\s*письмо\s+было\s+отправлено\s+внешним',
                       stripped, _re.IGNORECASE):
             continue
+        # Пропускаем "-----Original Message-----"
+        if _re.match(r'^-{3,}\s*Original\s*Message\s*-{3,}$', stripped, _re.IGNORECASE):
+            continue
         cleaned_lines.append(line)
     t = '\n'.join(cleaned_lines)
     # Схлопываем множественные пустые строки в одну
