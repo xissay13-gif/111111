@@ -217,16 +217,23 @@ def match_correspondent(text, full_name):
 
 def match_correspondent_strict(text, full_name):
     """Строгая проверка: ТОЛЬКО полное ФИО или инициалы.
-    Без фоллбэка на фамилию — чтобы не выбрать однофамильца."""
+    Без фоллбэка на фамилию — чтобы не выбрать однофамильца.
+    Нормализует: убирает точки, запятые, лишние пробелы."""
     text_clean = text.strip()
     # Прямое совпадение по полному ФИО
     if full_name in text_clean:
         return True
-    # Совпадение по инициалам: "Калганова Т А" или "Калганова Т.А."
+    # Совпадение по инициалам: "Калганова Т А", "Калганова Т.А.", "Калганова ТА"
     initials = fio_to_initials(full_name)
-    text_norm = text_clean.replace('.', '').replace(',', '')
-    initials_norm = initials.replace('.', '').replace(',', '')
-    if initials_norm.lower() in text_norm.lower():
+    # Нормализуем: убираем точки, запятые, пробелы — сравниваем "калгановата" vs "калгановата"
+    def normalize(s):
+        return s.replace('.', '').replace(',', '').replace(' ', '').lower()
+    if normalize(initials) in normalize(text_clean):
+        return True
+    # Ещё вариант: с пробелами но без точек
+    text_norm = text_clean.replace('.', '').replace(',', '').lower()
+    initials_norm = initials.replace('.', '').replace(',', '').lower()
+    if initials_norm in text_norm:
         return True
     return False
 
@@ -747,20 +754,32 @@ def fill_correspondent(driver, person_name):
     all_results = find_all_with_surname()
     if not all_results:
         corr_input.send_keys(Keys.ENTER)
-        time.sleep(2)
+        time.sleep(3)  # увеличено с 2 до 3
         all_results = find_all_with_surname()
 
     print(f"  Найдено кандидатов с фамилией '{surname}': {len(all_results)}")
+    # Подробный лог каждого кандидата
+    for i, r in enumerate(all_results[:5]):
+        try:
+            print(f"    Кандидат {i+1}: '{r.text.strip()[:80]}' (tag={r.tag_name})")
+        except Exception:
+            print(f"    Кандидат {i+1}: <ошибка чтения>")
 
     # Ищем СТРОГОЕ совпадение по инициалам (без фоллбэка на фамилию,
     # иначе выберем однофамильца вместо создания нового)
+    initials = fio_to_initials(person_name)
+    print(f"  Ищу строгое совпадение по инициалам: '{initials}'")
     target = None
     for r in all_results:
         try:
-            if match_correspondent_strict(r.text, person_name):
+            r_text = r.text.strip()
+            is_match = match_correspondent_strict(r_text, person_name)
+            if is_match:
                 target = r
-                print(f"  Совпадение по инициалам: {r.text.strip()[:80]}")
+                print(f"  СОВПАДЕНИЕ: '{r_text[:80]}'")
                 break
+            else:
+                print(f"    Не совпал: '{r_text[:60]}' vs '{initials}'")
         except Exception:
             continue
 
