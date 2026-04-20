@@ -1,8 +1,6 @@
-name: Build EXE
+name: Build Refactored EXEs
 
 on:
-  push:
-    branches: [ main ]
   workflow_dispatch:
 
 jobs:
@@ -18,21 +16,39 @@ jobs:
         python-version: '3.12'
 
     - name: Install dependencies
-      run: pip install selenium pyinstaller
+      run: pip install selenium openpyxl pyinstaller
 
-    - name: Build EXE
+    - name: Build smart_routing_refactor
       run: >
-        pyinstaller --onefile --name asud_create_doc
+        pyinstaller --onefile --name smart_routing_refactor
         --hidden-import=selenium.webdriver.edge.webdriver
         --hidden-import=selenium.webdriver.edge.service
         --hidden-import=selenium.webdriver.edge.options
         --hidden-import=selenium.webdriver.common.action_chains
         --hidden-import=selenium.webdriver.support.ui
         --hidden-import=selenium.webdriver.support.expected_conditions
-        asud_create_doc.py
+        --hidden-import=openpyxl
+        smart_routing_refactor.py
 
-    - name: Upload EXE
+    - name: Build auto_create_correspondent_refactor
+      run: >
+        pyinstaller --onefile --name auto_create_correspondent_refactor
+        --hidden-import=selenium.webdriver.edge.webdriver
+        --hidden-import=selenium.webdriver.edge.service
+        --hidden-import=selenium.webdriver.edge.options
+        --hidden-import=selenium.webdriver.common.action_chains
+        --hidden-import=selenium.webdriver.support.ui
+        --hidden-import=selenium.webdriver.support.expected_conditions
+        auto_create_correspondent_refactor.py
+
+    - name: Upload smart_routing_refactor
       uses: actions/upload-artifact@v4
       with:
-        name: asud_create_doc
-        path: dist/asud_create_doc.exe
+        name: smart_routing_refactor
+        path: dist/smart_routing_refactor.exe
+
+    - name: Upload auto_create_correspondent_refactor
+      uses: actions/upload-artifact@v4
+      with:
+        name: auto_create_correspondent_refactor
+        path: dist/auto_create_correspondent_refactor.exe
