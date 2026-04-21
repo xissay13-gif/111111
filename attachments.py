@@ -178,3 +178,25 @@ def attach_content(driver, file_path):
         log.info(f"Файл выбран через Explorer")
     except Exception as e:
         log.error(f"Ошибка pywinauto: {e}")
+        return
+
+    # Подтверждаем загрузку в модалке АСУД
+    time.sleep(2)
+    try:
+        confirm_btn = WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR,
+                "#SetContentDialogBtnSend, [id*='SetContentDialogBtnSend']")))
+        click(driver, confirm_btn, "Подтвердить присоединение")
+        time.sleep(3)
+        log.info("Файл присоединён!")
+    except Exception:
+        try:
+            btns = driver.find_elements(By.XPATH,
+                "//button[contains(text(),'Присоединить')] | //div[contains(text(),'Присоединить')]")
+            visible = [b for b in btns if b.is_displayed()]
+            if visible:
+                click(driver, visible[-1], "Подтвердить (fallback)")
+                time.sleep(3)
+                log.info("Файл присоединён (fallback)")
+        except Exception as e:
+            log.error(f"Ошибка подтверждения: {e}")
