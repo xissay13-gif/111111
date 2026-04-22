@@ -7,3 +7,4 @@ build/
 *.egg-info/
 .env
 *.log
+mix_state_*.json

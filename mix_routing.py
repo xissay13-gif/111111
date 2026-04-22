@@ -22,6 +22,7 @@ Excel Лист2: A=Link, B=Subject, C=TextBody, D=Тип, E=To (игнориру
 import os
 import re
 import sys
+import json
 import time
 import logging
 from datetime import date, datetime, timedelta
@@ -74,6 +75,55 @@ def _clean_body(text):
     t = '\n'.join(cleaned)
     t = re.sub(r'\n\s*\n\s*\n+', '\n\n', t)
     return t.strip()
+
+
+# ================= STATE (resume после крэша) =================
+
+def _link_key(link):
+    """Стабильный строковый ключ из Link (для state-файла)."""
+    if link is None:
+        return ""
+    if isinstance(link, (datetime, date)):
+        try:
+            return link.strftime("%Y-%m-%d %H:%M:%S")
+        except Exception:
+            return str(link)
+    return str(link).strip()
+
+
+def _state_path(xlsx_path):
+    """Путь к state-файлу рядом с exe, привязан к имени Excel."""
+    name = os.path.splitext(os.path.basename(xlsx_path))[0]
+    # Безопасное имя файла
+    safe = re.sub(r'[^\w.\-]+', '_', name)
+    return os.path.join(cfg.get_base_dir(), f"mix_state_{safe}.json")
+
+
+def load_state(xlsx_path):
+    """Загружает set обработанных Link-ключей."""
+    path = _state_path(xlsx_path)
+    if not os.path.isfile(path):
+        return set()
+    try:
+        with open(path, encoding='utf-8') as f:
+            data = json.load(f)
+        return set(data.get('processed', []))
+    except Exception as e:
+        log.warning(f"Не удалось прочитать state {path}: {e}")
+        return set()
+
+
+def save_state(xlsx_path, processed_set):
+    """Атомарно перезаписывает state-файл."""
+    path = _state_path(xlsx_path)
+    try:
+        tmp = path + '.tmp'
+        with open(tmp, 'w', encoding='utf-8') as f:
+            json.dump({'processed': sorted(processed_set)}, f,
+                      ensure_ascii=False, indent=2)
+        os.replace(tmp, path)
+    except Exception as e:
+        log.warning(f"Не удалось сохранить state {path}: {e}")
 
 
 def load_excel(file_path):
@@ -654,13 +704,41 @@ def main():
         input("Enter...")
         sys.exit(1)
 
+    # Resume: проверяем state-файл
+    processed = load_state(excel_path)
+    if processed:
+        done_in_current = [d for d in docs
+                           if _link_key(d.get("link")) in processed]
+        if done_in_current:
+            print(f"\nВ state-файле {len(done_in_current)} ранее обработанных документов.")
+            print("  Enter / 'да'  — ПРОПУСТИТЬ их, продолжить с остальных (по умолчанию)")
+            print("  'нет'         — обработать ВСЁ заново (дубли в АСУД! не рекомендуется)")
+            print("  'сброс'       — обнулить state и обработать всё (для полного старта)")
+            ans = input("Что делаем? [да]: ").strip().lower()
+            if ans in ("сброс", "reset"):
+                save_state(excel_path, set())
+                processed = set()
+                log.info("State обнулён — обрабатываю всё заново")
+            elif ans in ("нет", "н", "n", "no"):
+                log.info("Обрабатываю всё заново (state будет дополнен)")
+            else:
+                before = len(docs)
+                docs = [d for d in docs
+                        if _link_key(d.get("link")) not in processed]
+                log.info(f"Пропускаю {before - len(docs)} обработанных, "
+                         f"осталось {len(docs)}")
+                if not docs:
+                    log.info("Все строки уже обработаны — нечего делать.")
+                    input("Enter...")
+                    sys.exit(0)
+
     known = sum(1 for d in docs if d["корр_найден"])
     unknown = len(docs) - known
     print(f"\nПервые 5:")
     for i, d in enumerate(docs[:5], 1):
         flag = 'OK' if d["корр_найден"] else '!!'
         print(f"  {i}. [{d['тип_индекс']}] {flag} {d['корреспондент'][:30]} | {d['тема'][:50]}")
-    print(f"\nВсего: {len(docs)}  (ФИО: {known}, заглушка: {unknown})")
+    print(f"\nВсего к обработке: {len(docs)}  (ФИО: {known}, заглушка: {unknown})")
 
     confirm = input("Начать? (да/нет): ").strip().lower()
     if confirm not in ("да", "д", "y", "yes", ""):
@@ -690,19 +768,33 @@ def main():
         driver.get(url)
         wait_asud_loaded(driver)
 
+        done_count, err_count = 0, 0
         for i, doc in enumerate(docs, 1):
             try:
                 create_one_document(driver, doc, i, len(docs))
+                # Помечаем как обработанный сразу после успеха (до следующей итерации)
+                key = _link_key(doc.get("link"))
+                if key:
+                    processed.add(key)
+                    save_state(excel_path, processed)
+                done_count += 1
             except Exception as e:
                 log.error(f"ОШИБКА документ {i}: {e}")
+                err_count += 1
                 driver.get(url)
                 wait_asud_loaded(driver)
                 continue
 
         elapsed = timedelta(seconds=time.monotonic() - start_time)
-        log.info(f"ГОТОВО! Документов: {len(docs)} (в черновиках: {unknown}), время: {elapsed}")
+        log.info(f"ГОТОВО! Обработано: {done_count}/{len(docs)} "
+                 f"(ошибок: {err_count}, в черновиках: {unknown}), время: {elapsed}")
         if unknown:
-            log.warning(f"Проверьте {unknown} документов в черновиках — ФИО не извлечено автоматически")
+            log.warning(f"Проверьте {unknown} документов в черновиках — "
+                        f"ФИО не извлечено автоматически")
+        if err_count:
+            log.warning(f"{err_count} документов упали с ошибкой. "
+                        f"Перезапуск скрипта продолжит с них "
+                        f"(уже обработанные запомнены в state-файле).")
         input("\nEnter для закрытия...")
 
     except Exception as e:
