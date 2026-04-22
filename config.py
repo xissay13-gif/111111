@@ -17,9 +17,13 @@ DEFAULTS = {
     "asud_url": "https://asud.interrao.ru/asudik/",
     "timeout": 20,
     "outlook_dir": r"D:\OutlookSubjects",
-    "addressee": "Басманов Александр Владимирович",
-    "correspondent": "Неизвестный Неизвестный Неизвестный",
+    "addressees": [
+        "Басманов Александр Владимирович",
+        "Халецкая Юлия Владимировна",
+    ],
+    "unknown_correspondent": "Неизвестный Неизвестный Неизвестный",
     "delivery_method": "Электронная почта",
+    "sheet_name": "Лист2",
 }
 
 # Маппинг индекса из Excel → название вида в АСУД

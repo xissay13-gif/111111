@@ -1,8 +1,8 @@
-name: Build Smart Routing EXE
+name: Build Mix Routing EXE
 
 on:
   push:
-    branches: [ main ]
+    branches: [ clean-mix ]
   workflow_dispatch:
 
 jobs:
@@ -22,7 +22,7 @@ jobs:
 
     - name: Build EXE
       run: >
-        pyinstaller --onefile --name smart_routing
+        pyinstaller --onefile --name mix_routing
         --hidden-import=selenium.webdriver.edge.webdriver
         --hidden-import=selenium.webdriver.edge.service
         --hidden-import=selenium.webdriver.edge.options
@@ -32,10 +32,10 @@ jobs:
         --hidden-import=openpyxl
         --hidden-import=pyautogui
         --hidden-import=pywinauto
-        smart_routing.py
+        mix_routing.py
 
     - name: Upload EXE
       uses: actions/upload-artifact@v4
       with:
-        name: smart_routing
-        path: dist/smart_routing.exe
+        name: mix_routing
+        path: dist/mix_routing.exe

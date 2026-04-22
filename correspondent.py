@@ -24,6 +24,64 @@ from ui import click, find_input_near_label, close_open_modals
 log = logging.getLogger("asud.correspondent")
 
 
+# Маркеры, после которых следует ФИО корреспондента в теле письма
+FIO_MARKER_RE = re.compile(
+    r'(?iu)(?:ф\.?\s*и\.?\s*о|фио)\.?\s*'
+    r'(?:абонента|заявителя|обратившегося|обращающегося)?\s*:?\s*'
+    r'([А-ЯЁ][а-яёА-ЯЁ\s\.\-]{5,100}?)'
+    r'(?=\s*(?:\n|$|;|,|\(|\-\s|ЛС|Email|E\-mail|Почт|Телефон|Адрес|Контакт))'
+)
+
+# Loose-fallback: 3 заглавных слова подряд с русским отчеством
+FIO_LOOSE_RE = re.compile(
+    r'\b([А-ЯЁ][а-яё]+)\s+([А-ЯЁ][а-яё]+)\s+'
+    r'([А-ЯЁ][а-яё]*(?:ович|евич|ич|овна|евна|ична|инична))\b'
+)
+
+
+def _clean_fio(raw):
+    """Нормализует извлечённое ФИО: лишние пробелы, NBSP, точки инициалов, хвосты."""
+    if not raw:
+        return None
+    s = raw.replace('\xa0', ' ').strip(' \t\r\n.,;:-')
+    s = re.sub(r'\s+', ' ', s)
+    # Оставляем только первые 3 слова, если их больше (обрежем хвост "и контакты" и пр.)
+    parts = s.split()
+    if len(parts) > 3:
+        parts = parts[:3]
+    s = ' '.join(parts)
+    # Должно начинаться с заглавной кириллицы и содержать >=2 слов
+    if len(parts) < 2:
+        return None
+    if not re.match(r'^[А-ЯЁ]', s):
+        return None
+    return s
+
+
+def extract_fio_from_text(text):
+    """Извлекает ФИО корреспондента из TextBody.
+
+    Возвращает (fio, source) где source ∈ {'marker','loose',None}.
+    Если не найдено — (None, None).
+    """
+    if not text:
+        return None, None
+    t = str(text).replace('_x000D_', '\n')
+    # 1) По маркеру "Ф.И.О. абонента: ..."
+    m = FIO_MARKER_RE.search(t)
+    if m:
+        fio = _clean_fio(m.group(1))
+        if fio:
+            return fio, 'marker'
+    # 2) Loose: 3 слова с русским отчеством — берём первое
+    m = FIO_LOOSE_RE.search(t)
+    if m:
+        fio = _clean_fio(f"{m.group(1)} {m.group(2)} {m.group(3)}")
+        if fio:
+            return fio, 'loose'
+    return None, None
+
+
 def fio_to_initials(full_name):
     """'Калганова Тамара Алексеевна' → 'Калганова Т А'"""
     parts = full_name.strip().split()

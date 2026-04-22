@@ -1,13 +1,22 @@
 """
-smart_routing.py — Пакетное создание Входящих документов в АСУД ИК.
+mix_routing.py — Пакетное создание Входящих документов (auto-create + smart-routing).
 
-Читает Excel, определяет тип документа, создаёт в АСУД, прикрепляет .msg.
+Читает Excel (Лист2), извлекает ФИО корреспондента из TextBody.
+Для каждой строки:
+  - Определяет тип документа по индексу (колонка D)
+  - Создаёт карточку, заполняет поля
+  - Прикрепляет .msg из D:\\OutlookSubjects по Link
+  - Если ФИО найдено → регистрирует + На резолюцию + Да
+  - Если ФИО не найдено → корреспондент="Неизвестный...", оставляет в ЧЕРНОВИКАХ
+    + WARNING в логе (чтобы вручную доработать после прогона)
+
+Excel Лист2: A=Link, B=Subject, C=TextBody, D=Тип, E=To (игнорируем — пересыльщик).
 
 Модули:
-  config.py       — настройки (+ config.json)
-  ui.py           — Selenium UI-хелперы
-  correspondent.py — создание корреспондентов
-  attachments.py  — поиск и прикрепление файлов
+  config.py        — настройки (+ config.json)
+  ui.py            — Selenium UI-хелперы
+  correspondent.py — выбор/создание корреспондента + extract_fio_from_text
+  attachments.py   — поиск и прикрепление файлов
 """
 
 import os
@@ -30,8 +39,8 @@ from selenium.webdriver.support import expected_conditions as EC
 import config as cfg
 from ui import (click, wait_and_click, find_input_near_label,
                 wait_asud_loaded, wait_modal_closed, close_open_modals, js_set_value)
-from correspondent import (fill_correspondent_field, create_correspondent,
-                           match_strict, fio_to_initials)
+from correspondent import (fill_correspondent_field, match_strict, fio_to_initials,
+                           extract_fio_from_text)
 from attachments import find_msg_by_link, get_dummy_msg, attach_content
 
 
@@ -40,9 +49,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',
     datefmt='%H:%M:%S',
-    handlers=[
-        logging.StreamHandler(),
-    ]
+    handlers=[logging.StreamHandler()],
 )
 log = logging.getLogger("asud")
 start_time = time.monotonic()
@@ -51,7 +58,7 @@ start_time = time.monotonic()
 # ================= EXCEL =================
 
 def _clean_body(text):
-    """Очищает TextBody от служебных строк."""
+    """Очищает TextBody от служебных строк (Original Message, ВНИМАНИЕ…)."""
     if not text:
         return ""
     t = str(text).replace('_x000D_', '\n')
@@ -70,16 +77,31 @@ def _clean_body(text):
 
 
 def load_excel(file_path):
-    """Читает Excel. Колонки: A=Link, B=Subject, C=TextBody, D=Тип."""
+    """Читает Лист2. Колонки: A=Link, B=Subject, C=TextBody, D=Тип (index).
+
+    ФИО корреспондента извлекается из TextBody.
+    Если не найдено — ставится заглушка (unknown_correspondent) и флаг corr_found=False
+    → такой документ потом останется в черновиках.
+    """
+    sheet_name = settings.get("sheet_name", cfg.DEFAULTS["sheet_name"])
+    unknown = settings.get("unknown_correspondent", cfg.DEFAULTS["unknown_correspondent"])
+
     wb = openpyxl.load_workbook(file_path, data_only=True)
-    ws = wb.active
+    if sheet_name in wb.sheetnames:
+        ws = wb[sheet_name]
+    else:
+        log.warning(f"Лист '{sheet_name}' не найден, использую активный: {wb.active.title}")
+        ws = wb.active
+
     rows = []
     skipped = 0
+    unknown_rows = []
 
-    for row in ws.iter_rows(min_row=2, max_row=ws.max_row, values_only=True):
+    for row_idx, row in enumerate(ws.iter_rows(min_row=2, max_row=ws.max_row, values_only=True), 2):
         if not row or len(row) < 4:
             skipped += 1
             continue
+        link = row[0]
         subject = row[1]
         body = row[2]
         type_idx = row[3]
@@ -95,19 +117,38 @@ def load_excel(file_path):
             skipped += 1
             continue
 
-        clean_subject = re.sub(r'^(FW:|RE:|Fwd:)\s*', '', str(subject).strip(), flags=re.IGNORECASE)
+        clean_subject = re.sub(r'^(FW:|RE:|Fwd:)\s*', '',
+                               str(subject).strip(), flags=re.IGNORECASE)
         body_clean = _clean_body(body) if body else clean_subject
 
+        fio, fio_src = extract_fio_from_text(body)
+        if fio:
+            correspondent = fio
+            corr_found = True
+        else:
+            correspondent = unknown
+            corr_found = False
+            unknown_rows.append((row_idx, clean_subject))
+
         rows.append({
+            "row_idx": row_idx,
             "содержание": body_clean,
-            "корреспондент": settings.get("correspondent", "Неизвестный Неизвестный Неизвестный"),
+            "корреспондент": correspondent,
+            "корр_найден": corr_found,
+            "корр_источник": fio_src,
             "тема": clean_subject,
             "тип_индекс": type_idx,
             "тип_название": cfg.DOC_TYPE_MAP[type_idx],
-            "link": row[0],
+            "link": link,
         })
     wb.close()
+
     log.info(f"Загружено: {len(rows)}, пропущено: {skipped}")
+    log.info(f"  ФИО найдено: {sum(1 for r in rows if r['корр_найден'])}")
+    log.info(f"  ФИО НЕ найдено: {len(unknown_rows)} (уйдут в черновики)")
+    for ri, subj in unknown_rows:
+        log.info(f"    → Row {ri}: {subj[:60]}")
+
     return rows
 
 
@@ -146,8 +187,7 @@ def fill_corr_number(driver, link=None):
         log.warning("Поле 'Номер у корреспондента' не найдено")
         return
     try:
-        driver.execute_script(
-            "arguments[0].scrollIntoView({block:'center'});", inp)
+        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", inp)
         time.sleep(0.3)
         inp.click()
         time.sleep(0.3)
@@ -190,8 +230,7 @@ def fill_corr_date(driver):
         log.warning("Поле 'Дата у корреспондента' не найдено")
         return
     try:
-        driver.execute_script(
-            "arguments[0].scrollIntoView({block:'center'});", inp)
+        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", inp)
         driver.execute_script("arguments[0].focus(); arguments[0].click();", inp)
         time.sleep(0.3)
         inp.send_keys(Keys.CONTROL + "a")
@@ -250,7 +289,7 @@ def fill_delivery_method(driver):
     time.sleep(1.5)
 
     option = None
-    for attempt in range(3):
+    for _ in range(3):
         candidates = driver.find_elements(By.XPATH,
             f"//*[contains(text(),'{target_text}')]")
         for c in candidates:
@@ -272,7 +311,7 @@ def fill_delivery_method(driver):
 
 
 def add_addressee(driver, person_name):
-    """Добавляет адресата через combobox."""
+    """Добавляет одного адресата через combobox."""
     inp = find_input_near_label(driver, "Адресаты")
     if not inp:
         log.warning("Поле адресата не найдено")
@@ -312,8 +351,7 @@ def add_addressee(driver, person_name):
         target = all_results[0]
 
     if target:
-        driver.execute_script(
-            "arguments[0].scrollIntoView({block:'center'});", target)
+        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", target)
         time.sleep(0.3)
         ActionChains(driver).move_to_element(target).pause(0.3).click().perform()
         time.sleep(1)
@@ -322,13 +360,122 @@ def add_addressee(driver, person_name):
         log.warning(f"Адресат не найден: {person_name}")
 
 
+# ================= REGISTRATION =================
+
+def register_and_resolve(driver, index, total):
+    """Регистрирует + На резолюцию + Да. Возвращает True при успехе."""
+    log.info("Регистрирую...")
+    registered = False
+    try:
+        btn = WebDriverWait(driver, cfg.DEFAULTS["timeout"]).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR,
+                "#header-action-btn-register, [id*='header-action-btn-register']")))
+        click(driver, btn, "Зарегистрировать")
+        time.sleep(3)
+        log.info(f"Документ {index}/{total} ЗАРЕГИСТРИРОВАН")
+        registered = True
+    except Exception:
+        try:
+            btn = driver.find_element(By.XPATH, "//div[contains(text(),'Зарегистрировать')]")
+            click(driver, btn, "Зарегистрировать (fallback)")
+            time.sleep(3)
+            registered = True
+        except Exception as e:
+            log.error(f"'Зарегистрировать' не найдена: {e}")
+
+    if not registered:
+        return False
+
+    # На резолюцию
+    res_btn = None
+    for _ in range(10):
+        try:
+            btn = driver.find_element(By.ID, "header-action-btn-send_on_resolution")
+            if btn.is_displayed():
+                res_btn = btn
+                break
+        except Exception:
+            pass
+        try:
+            for b in driver.find_elements(By.XPATH, "//*[contains(text(),'На резолюцию')]"):
+                if b.is_displayed():
+                    res_btn = b
+                    break
+        except Exception:
+            pass
+        if res_btn:
+            break
+        time.sleep(1)
+
+    if not res_btn:
+        log.warning("'На резолюцию' не появилась")
+        return True
+
+    click(driver, res_btn, "На резолюцию")
+    time.sleep(2)
+
+    # Да
+    yes_btn = None
+    for _ in range(10):
+        try:
+            btn = driver.find_element(By.ID, "confirm_dialog_btn_yes")
+            if btn.is_displayed():
+                yes_btn = btn
+                break
+        except Exception:
+            pass
+        try:
+            for b in driver.find_elements(By.XPATH, "//*[normalize-space(text())='Да']"):
+                if b.is_displayed():
+                    yes_btn = b
+                    break
+        except Exception:
+            pass
+        if yes_btn:
+            break
+        time.sleep(1)
+
+    if yes_btn:
+        try:
+            ActionChains(driver).move_to_element(yes_btn).pause(0.3).click().perform()
+        except Exception:
+            driver.execute_script("arguments[0].click();", yes_btn)
+        time.sleep(3)
+        log.info(f"Документ {index}/{total} НА РЕЗОЛЮЦИИ")
+    return True
+
+
+def close_card_and_wait_main(driver):
+    """Закрывает карточку через header-close-btn и ждёт главную страницу."""
+    time.sleep(2)
+    try:
+        close_btn = driver.find_element(By.ID, "header-close-btn")
+        if close_btn.is_displayed():
+            ActionChains(driver).move_to_element(close_btn).pause(0.3).click().perform()
+            time.sleep(2)
+            log.info("Карточка закрыта")
+        else:
+            log.info("Карточка уже закрыта")
+    except Exception:
+        log.info("Карточка уже закрыта")
+
+    try:
+        WebDriverWait(driver, 10).until(
+            EC.element_to_be_clickable((By.ID, "mainscreen-create-button")))
+    except Exception:
+        log.warning("Главная не загрузилась — перезагружаю")
+        driver.get(settings.get("asud_url", cfg.DEFAULTS["asud_url"]))
+        wait_asud_loaded(driver)
+
+
 # ================= DOCUMENT FLOW =================
 
 def create_one_document(driver, doc_data, index, total):
     """Создаёт один входящий документ."""
     log.info(f"{'='*50}")
     log.info(f"ДОКУМЕНТ {index}/{total}: {doc_data['тема'][:60]}")
-    log.info(f"Корреспондент: {doc_data['корреспондент']}")
+    log.info(f"Корреспондент: {doc_data['корреспондент']} "
+             f"({'найден ' + (doc_data['корр_источник'] or '') if doc_data['корр_найден'] else 'ЗАГЛУШКА'})")
     log.info(f"Тип: {doc_data['тип_название']}")
 
     # [1/7] Кнопка создания
@@ -350,7 +497,6 @@ def create_one_document(driver, doc_data, index, total):
         f"//div[contains(text(),'{short}')] | //td[contains(text(),'{short}')]", subtype)
     time.sleep(0.5)
 
-    # Создать документ
     wait_and_click(driver, By.XPATH,
         "//button[contains(text(),'Создать документ')] | //div[contains(text(),'Создать документ')]",
         "Создать документ")
@@ -361,8 +507,11 @@ def create_one_document(driver, doc_data, index, total):
     fill_correspondent_field(driver, doc_data["корреспондент"])
     fill_corr_number(driver, doc_data.get("link"))
     fill_corr_date(driver)
-    add_addressee(driver, settings.get("addressee", "Басманов Александр Владимирович"))
-    time.sleep(0.5)
+
+    for addr in settings.get("addressees", cfg.DEFAULTS["addressees"]):
+        add_addressee(driver, addr)
+        time.sleep(0.5)
+
     fill_delivery_method(driver)
     time.sleep(0.5)
 
@@ -386,27 +535,15 @@ def create_one_document(driver, doc_data, index, total):
     else:
         log.info("Нет файла — пропускаю")
 
-    # [7/7] Закрытие карточки
-    log.info(f"Документ {index}/{total} в черновиках")
-    time.sleep(2)
-    try:
-        close_btn = driver.find_element(By.ID, "header-close-btn")
-        if close_btn.is_displayed():
-            ActionChains(driver).move_to_element(close_btn).pause(0.3).click().perform()
-            time.sleep(2)
-            log.info("Карточка закрыта")
-        else:
-            log.info("Карточка уже закрыта")
-    except Exception:
-        log.info("Карточка уже закрыта")
+    # [7/7] Регистрация (если ФИО найдено) или черновик
+    if doc_data["корр_найден"]:
+        register_and_resolve(driver, index, total)
+    else:
+        log.warning(f"Row {doc_data['row_idx']}: ФИО НЕ найдено — "
+                    f"оставляю в ЧЕРНОВИКАХ для ручной доработки "
+                    f"(тема: {doc_data['тема'][:60]})")
 
-    try:
-        WebDriverWait(driver, 10).until(
-            EC.element_to_be_clickable((By.ID, "mainscreen-create-button")))
-    except Exception:
-        log.warning("Главная не загрузилась — перезагружаю")
-        driver.get(settings.get("asud_url", cfg.DEFAULTS["asud_url"]))
-        wait_asud_loaded(driver)
+    close_card_and_wait_main(driver)
 
 
 # ================= MAIN =================
@@ -419,7 +556,7 @@ def main():
     settings = cfg.load()
 
     log.info("=" * 50)
-    log.info("АСУД ИК — Пакетное создание Входящих документов")
+    log.info("АСУД ИК — MIX (auto-create + smart-routing)")
     log.info("=" * 50)
 
     base_dir = cfg.get_base_dir()
@@ -444,7 +581,7 @@ def main():
             log.error("Неверный выбор")
             sys.exit(1)
 
-    # Пустышка
+    # Пустышка (для случаев когда .msg по link не найден)
     msg_path = get_dummy_msg(base_dir)
     if msg_path:
         log.info(f"Пустышка: {os.path.basename(msg_path)}")
@@ -459,10 +596,13 @@ def main():
         input("Enter...")
         sys.exit(1)
 
+    known = sum(1 for d in docs if d["корр_найден"])
+    unknown = len(docs) - known
     print(f"\nПервые 5:")
     for i, d in enumerate(docs[:5], 1):
-        print(f"  {i}. [{d['тип_индекс']}] {d['тема'][:60]}")
-    print(f"\nВсего: {len(docs)}")
+        flag = 'OK' if d["корр_найден"] else '!!'
+        print(f"  {i}. [{d['тип_индекс']}] {flag} {d['корреспондент'][:30]} | {d['тема'][:50]}")
+    print(f"\nВсего: {len(docs)}  (ФИО: {known}, заглушка: {unknown})")
 
     confirm = input("Начать? (да/нет): ").strip().lower()
     if confirm not in ("да", "д", "y", "yes", ""):
@@ -470,10 +610,9 @@ def main():
         sys.exit(0)
 
     # Браузер
-    from config import get_base_dir
-    driver_path = os.path.join(get_base_dir(), "msedgedriver.exe")
+    driver_path = os.path.join(base_dir, "msedgedriver.exe")
     if not os.path.exists(driver_path):
-        log.error(f"msedgedriver.exe не найден в {get_base_dir()}")
+        log.error(f"msedgedriver.exe не найден в {base_dir}")
         input("Enter...")
         sys.exit(1)
 
@@ -503,7 +642,9 @@ def main():
                 continue
 
         elapsed = timedelta(seconds=time.monotonic() - start_time)
-        log.info(f"ГОТОВО! Документов: {len(docs)}, время: {elapsed}")
+        log.info(f"ГОТОВО! Документов: {len(docs)} (в черновиках: {unknown}), время: {elapsed}")
+        if unknown:
+            log.warning(f"Проверьте {unknown} документов в черновиках — ФИО не извлечено автоматически")
         input("\nEnter для закрытия...")
 
     except Exception as e:
