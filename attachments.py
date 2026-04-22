@@ -1,7 +1,7 @@
 """
 attachments.py — Поиск и прикрепление .msg файлов.
 
-Ищет файл по Link из Excel в D:\OutlookSubjects,
+Ищет файл по Link из Excel в outlook_dir (рекурсивно по подпапкам),
 прикрепляет через pywinauto (нативный Windows Explorer).
 """
 
@@ -44,24 +44,34 @@ def _link_to_variants(link):
         s = str(link).strip()
         if s:
             variants.add(s)
-            # DD.MM.YYYY → ISO
+            # DD.MM.YYYY → ISO (+ с/без ведущего нуля в часе)
             m = re.match(r'^(\d{2})\.(\d{2})\.(\d{4})\s+(\d{1,2})-(\d{2})-(\d{2})$', s)
             if m:
                 dd, mm, yyyy, h, mn, sec = m.groups()
-                variants.add(f"{dd}.{mm}.{yyyy} {int(h):02d}-{mn}-{sec}")
-                variants.add(f"{yyyy}-{mm}-{dd} {int(h):02d}-{mn}-{sec}")
+                h_lead = f"{int(h):02d}"
+                h_no = str(int(h))
+                variants.add(f"{dd}.{mm}.{yyyy} {h_lead}-{mn}-{sec}")
+                variants.add(f"{dd}.{mm}.{yyyy} {h_no}-{mn}-{sec}")
+                variants.add(f"{yyyy}-{mm}-{dd} {h_lead}-{mn}-{sec}")
+                variants.add(f"{yyyy}-{mm}-{dd} {h_no}-{mn}-{sec}")
             # ISO → DD.MM.YYYY
             m = re.match(r'^(\d{4})-(\d{2})-(\d{2})\s+(\d{1,2})-(\d{2})-(\d{2})$', s)
             if m:
                 yyyy, mm, dd, h, mn, sec = m.groups()
-                variants.add(f"{dd}.{mm}.{yyyy} {int(h):02d}-{mn}-{sec}")
+                h_lead = f"{int(h):02d}"
+                h_no = str(int(h))
+                variants.add(f"{dd}.{mm}.{yyyy} {h_lead}-{mn}-{sec}")
+                variants.add(f"{dd}.{mm}.{yyyy} {h_no}-{mn}-{sec}")
+                variants.add(f"{yyyy}-{mm}-{dd} {h_lead}-{mn}-{sec}")
+                variants.add(f"{yyyy}-{mm}-{dd} {h_no}-{mn}-{sec}")
 
     variants.discard('')
     return list(variants)
 
 
 def find_msg_by_link(link, outlook_dir, fallback_path=None):
-    """Ищет .msg файл в outlook_dir по link. Fallback → пустышка."""
+    """Ищет .msg файл в outlook_dir (рекурсивно по подпапкам) по link.
+    Fallback → пустышка."""
     log.info(f"link={link!r} (тип: {type(link).__name__})")
 
     if link is None or (isinstance(link, str) and not link.strip()):
@@ -75,33 +85,48 @@ def find_msg_by_link(link, outlook_dir, fallback_path=None):
     variants = _link_to_variants(link)
     log.info(f"Варианты: {variants}")
 
-    # Точное совпадение
-    for v in variants:
-        for ext in ('.msg', '.MSG'):
-            path = os.path.join(outlook_dir, v + ext)
-            if os.path.isfile(path):
-                log.info(f"Нашёл: {os.path.basename(path)}")
-                return path
-
-    # С суффиксами _1.._9
-    for v in variants:
-        for suffix in range(1, 10):
-            for ext in ('.msg', '.MSG'):
-                path = os.path.join(outlook_dir, f"{v}_{suffix}{ext}")
-                if os.path.isfile(path):
-                    log.info(f"Нашёл (_{suffix}): {os.path.basename(path)}")
-                    return path
-
-    # Подстрока
+    # Один проход по дереву — собираем все .msg
+    all_msg = []  # [(full_path, filename_no_ext)]
     try:
-        for f in os.listdir(outlook_dir):
-            if f.lower().endswith('.msg'):
-                for v in variants:
-                    if v in f:
-                        log.info(f"Нашёл (подстрока): {f}")
-                        return os.path.join(outlook_dir, f)
+        for root, _dirs, files in os.walk(outlook_dir):
+            for f in files:
+                if f.lower().endswith('.msg'):
+                    name_no_ext = os.path.splitext(f)[0]
+                    all_msg.append((os.path.join(root, f), name_no_ext))
     except Exception as e:
-        log.error(f"Ошибка сканирования: {e}")
+        log.error(f"Ошибка обхода {outlook_dir}: {e}")
+        return fallback_path
+
+    if not all_msg:
+        log.warning(f"В {outlook_dir} нет .msg файлов")
+        return fallback_path
+
+    def _rel(full):
+        try:
+            return os.path.relpath(full, outlook_dir)
+        except Exception:
+            return os.path.basename(full)
+
+    # Фаза 1: точное совпадение с вариантом
+    variants_set = set(variants)
+    for full, name in all_msg:
+        if name in variants_set:
+            log.info(f"Нашёл: {_rel(full)}")
+            return full
+
+    # Фаза 2: variant + _1.._9
+    suffix_set = {f"{v}_{i}" for v in variants for i in range(1, 10)}
+    for full, name in all_msg:
+        if name in suffix_set:
+            log.info(f"Нашёл (суффикс): {_rel(full)}")
+            return full
+
+    # Фаза 3: подстрока
+    for full, name in all_msg:
+        for v in variants:
+            if v in name:
+                log.info(f"Нашёл (подстрока): {_rel(full)}")
+                return full
 
     log.warning("Файл не найден — пустышка")
     return fallback_path
