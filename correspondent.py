@@ -34,15 +34,27 @@ def fio_to_initials(full_name):
     return parts[0] if parts else full_name
 
 
+def _norm_no_space(s):
+    return s.replace('.', '').replace(',', '').replace(' ', '').replace('\xa0', '').lower()
+
+
+def _norm_keep_space(s):
+    import re as _re
+    s = s.replace('\xa0', ' ').replace('.', '').replace(',', '')
+    return _re.sub(r'\s+', ' ', s).strip().lower()
+
+
 def match_correspondent(text, full_name):
     """Мягкий матч: полное ФИО / инициалы / фамилия. Для адресатов."""
     text_clean = text.strip()
     if full_name in text_clean:
         return True
     initials = fio_to_initials(full_name)
-    text_norm = text_clean.replace('.', '').replace(',', '')
-    initials_norm = initials.replace('.', '').replace(',', '')
-    if initials_norm.lower() in text_norm.lower():
+    if _norm_keep_space(initials) in _norm_keep_space(text_clean):
+        return True
+    if _norm_no_space(initials) in _norm_no_space(text_clean):
+        return True
+    if _norm_no_space(full_name) in _norm_no_space(text_clean):
         return True
     surname = full_name.split()[0]
     if text_clean.lower().startswith(surname.lower()):
@@ -51,14 +63,19 @@ def match_correspondent(text, full_name):
 
 
 def match_strict(text, full_name):
-    """Строгий матч: только полное ФИО или инициалы. Для корреспондентов."""
+    """Строгий матч: только полное ФИО или инициалы. Для корреспондентов.
+    Нормализует любые пробелы (включая NBSP) и точки/запятые."""
     text_clean = text.strip()
     if full_name in text_clean:
         return True
+    if _norm_keep_space(full_name) in _norm_keep_space(text_clean):
+        return True
+    if _norm_no_space(full_name) in _norm_no_space(text_clean):
+        return True
     initials = fio_to_initials(full_name)
-    text_norm = text_clean.replace('.', '').replace(',', '')
-    initials_norm = initials.replace('.', '').replace(',', '')
-    if initials_norm.lower() in text_norm.lower():
+    if _norm_keep_space(initials) in _norm_keep_space(text_clean):
+        return True
+    if _norm_no_space(initials) in _norm_no_space(text_clean):
         return True
     return False
 
@@ -405,20 +422,23 @@ def fill_correspondent_field(driver, person_name):
     if not all_results:
         from selenium.webdriver.common.keys import Keys as _Keys
         inp.send_keys(_Keys.ENTER)
-        time.sleep(2)
+        time.sleep(3)
         all_results = find_all()
 
-    log.info(f"Кандидатов: {len(all_results)}")
+    log.info(f"Кандидатов: {len(all_results)} (ищем '{initials}')")
 
     # Строгий матч по инициалам
     target = None
-    for r in all_results:
+    for idx, r in enumerate(all_results, 1):
         try:
-            if match_strict(r.text, person_name):
+            raw = r.text
+            ok = match_strict(raw, person_name)
+            preview = raw.strip().replace('\n', ' ')[:80]
+            log.info(f"  [{idx}] {'OK' if ok else '--'} | {preview!r}")
+            if ok and target is None:
                 target = r
-                log.info(f"Совпадение: {r.text.strip()[:60]}")
-                break
-        except Exception:
+        except Exception as e:
+            log.info(f"  [{idx}] ERR читаю text: {e}")
             continue
 
     if target:
