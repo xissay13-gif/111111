@@ -446,9 +446,23 @@ def create_correspondent(driver, person_name):
         close_open_modals(driver)
 
 
+def _correspondent_field_value(driver):
+    """Читает текущее значение поля 'Корреспондент' (для пост-верификации)."""
+    try:
+        inp = find_input_near_label(driver, "Корреспондент")
+        if not inp:
+            return ""
+        val = (inp.get_attribute('value') or '').strip()
+        return val
+    except Exception:
+        return ""
+
+
 def fill_correspondent_field(driver, person_name):
     """Заполняет поле Корреспондент через combobox.
-    Если не найден по инициалам — создаёт нового."""
+    Если не найден по инициалам — создаёт нового.
+    Пост-верификация: после клика проверяет что поле реально заполнилось;
+    иначе падает в create_correspondent."""
     log.info(f"Корреспондент: {person_name}")
     time.sleep(1)
 
@@ -473,8 +487,20 @@ def fill_correspondent_field(driver, person_name):
     def find_all():
         from selenium.webdriver.common.by import By as _By
         results = driver.find_elements(_By.XPATH, f"//*[contains(text(),'{surname}')]")
-        return [r for r in results
-                if r.is_displayed() and r != inp and r.tag_name.lower() != 'input']
+        out = []
+        for r in results:
+            try:
+                if not r.is_displayed() or r == inp or r.tag_name.lower() == 'input':
+                    continue
+                # Фильтр длины: варианты выпадашки всегда короткие,
+                # длинные элементы — это заголовки/тело страницы.
+                txt = r.text or ""
+                if len(txt) > 150:
+                    continue
+                out.append(r)
+            except Exception:
+                continue
+        return out
 
     all_results = find_all()
     if not all_results:
@@ -487,26 +513,57 @@ def fill_correspondent_field(driver, person_name):
 
     # Строгий матч по инициалам
     target = None
+    target_desc = ""
     for idx, r in enumerate(all_results, 1):
         try:
             raw = r.text
             ok = match_strict(raw, person_name)
             preview = raw.strip().replace('\n', ' ')[:80]
-            log.info(f"  [{idx}] {'OK' if ok else '--'} | {preview!r}")
+            # Логируем tag + class для диагностики что именно за элемент
+            try:
+                tag = r.tag_name
+                cls = (r.get_attribute('class') or '')[:40]
+                meta = f"{tag}.{cls}" if cls else tag
+            except Exception:
+                meta = "?"
+            log.info(f"  [{idx}] {'OK' if ok else '--'} <{meta}> | {preview!r}")
             if ok and target is None:
                 target = r
+                target_desc = f"[{idx}] <{meta}> {preview!r}"
         except Exception as e:
             log.info(f"  [{idx}] ERR читаю text: {e}")
             continue
 
     if target:
         from selenium.webdriver.common.action_chains import ActionChains as _AC
-        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", target)
+        from selenium.webdriver.common.keys import Keys as _Keys
+        try:
+            driver.execute_script("arguments[0].scrollIntoView({block:'center'});", target)
+        except Exception:
+            pass
         time.sleep(0.3)
-        _AC(driver).move_to_element(target).pause(0.3).click().perform()
+        try:
+            _AC(driver).move_to_element(target).pause(0.3).click().perform()
+        except Exception:
+            try:
+                driver.execute_script("arguments[0].click();", target)
+            except Exception:
+                pass
         time.sleep(1)
-        log.info(f"Корреспондент выбран: {person_name}")
-        return
+
+        # Пост-верификация: поле должно заполниться фамилией
+        val = _correspondent_field_value(driver)
+        if val and surname.lower() in val.lower():
+            log.info(f"Корреспондент выбран: {person_name} (поле: {val!r})")
+            return
+        log.warning(f"Клик прошёл ({target_desc}), но поле пустое/не наше "
+                    f"(val={val!r}) — падаю в создание нового")
+        try:
+            inp.send_keys(_Keys.ESCAPE)
+            time.sleep(0.5)
+        except Exception:
+            pass
+        # продолжаем к create_correspondent ниже
 
     # Нет совпадения — создаём нового
     log.info(f"'{initials}' не найден — создаю нового")
