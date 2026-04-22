@@ -417,6 +417,7 @@ def register_and_resolve(driver, index, total):
     # Да
     yes_btn = None
     for _ in range(10):
+        # 1) Точный id
         try:
             btn = driver.find_element(By.ID, "confirm_dialog_btn_yes")
             if btn.is_displayed():
@@ -424,6 +425,16 @@ def register_and_resolve(driver, index, total):
                 break
         except Exception:
             pass
+        # 2) Substring id (GWT может добавлять префиксы/суффиксы)
+        try:
+            btn = driver.find_element(By.CSS_SELECTOR,
+                "[id*='confirm_dialog_btn_yes'], [id*='confirm'][id*='yes']")
+            if btn.is_displayed():
+                yes_btn = btn
+                break
+        except Exception:
+            pass
+        # 3) По тексту "Да" в любом видимом элементе
         try:
             for b in driver.find_elements(By.XPATH, "//*[normalize-space(text())='Да']"):
                 if b.is_displayed():
@@ -437,11 +448,44 @@ def register_and_resolve(driver, index, total):
 
     if yes_btn:
         try:
-            ActionChains(driver).move_to_element(yes_btn).pause(0.3).click().perform()
+            driver.execute_script("arguments[0].scrollIntoView({block:'center'});", yes_btn)
+            time.sleep(0.3)
         except Exception:
-            driver.execute_script("arguments[0].click();", yes_btn)
+            pass
+        clicked = False
+        # 1) ActionChains
+        try:
+            ActionChains(driver).move_to_element(yes_btn).pause(0.3).click().perform()
+            log.info(f"Клик 'Да' (ActionChains): id={yes_btn.get_attribute('id')}")
+            clicked = True
+        except Exception as e:
+            log.info(f"ActionChains 'Да' не сработал: {e}")
+        # 2) JS
+        if not clicked:
+            try:
+                driver.execute_script("arguments[0].click();", yes_btn)
+                log.info("Клик 'Да' (JS)")
+                clicked = True
+            except Exception as e:
+                log.info(f"JS 'Да' не сработал: {e}")
+        # 3) Нативный
+        if not clicked:
+            try:
+                yes_btn.click()
+                log.info("Клик 'Да' (native)")
+                clicked = True
+            except Exception as e:
+                log.info(f"Native 'Да' не сработал: {e}")
+        # 4) Enter — GWT-диалоги часто принимают его
+        if clicked:
+            try:
+                ActionChains(driver).send_keys(Keys.ENTER).perform()
+            except Exception:
+                pass
         time.sleep(3)
         log.info(f"Документ {index}/{total} НА РЕЗОЛЮЦИИ")
+    else:
+        log.warning("Диалог 'Да' не появился за 10 сек")
     return True
 
 
