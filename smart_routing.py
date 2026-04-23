@@ -147,11 +147,14 @@ def fill_text(driver, text):
             log.warning(f"JS-ввод textarea упал: {e}, падаю в send_keys")
 
         if not js_ok:
+            # Fallback: замещаем табы пробелами, чтобы они не уводили
+            # фокус на следующее поле формы АСУД
+            safe_text = text.replace('\t', '    ')
             ta.click()
             time.sleep(0.3)
             ta.clear()
-            ta.send_keys(text)
-            log.info("Краткое содержание: send_keys (fallback)")
+            ta.send_keys(safe_text)
+            log.info("Краткое содержание: send_keys fallback (табы заменены)")
     except Exception as e:
         log.error(f"Ошибка заполнения содержания: {e}")
     time.sleep(0.5)
