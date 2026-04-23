@@ -761,6 +761,50 @@ def _choose_xlsx(base_dir):
         sys.exit(1)
 
 
+def _detect_scenario(xlsx_path):
+    """Определяет сценарий по структуре xlsx.
+
+    Возвращает 'mix' / 'auto-create' / None.
+
+    Правила:
+      - Лист 'Лист2' с заголовками 'Link' + 'Тип' → mix
+      - В заголовках активного листа есть 'Корреспондент' → auto-create
+      - иначе None (ручной выбор)
+    """
+    try:
+        wb = openpyxl.load_workbook(xlsx_path, data_only=True, read_only=True)
+    except Exception as e:
+        log.warning(f"Не удалось открыть xlsx для авто-детекта: {e}")
+        return None
+
+    def _headers(ws):
+        try:
+            row = next(ws.iter_rows(min_row=1, max_row=1, values_only=True))
+        except StopIteration:
+            return []
+        return [str(c).strip().lower() for c in row if c is not None]
+
+    try:
+        # Правило 1: mix по Лист2 с уникальными колонками Link + TextBody
+        if "Лист2" in wb.sheetnames:
+            mix_headers = _headers(wb["Лист2"])
+            if "link" in mix_headers and "textbody" in mix_headers:
+                log.info(f"Авто-детект: MIX (Лист2 с Link+TextBody)")
+                return "mix"
+
+        # Правило 2: auto-create по заголовку "Корреспондент" в активном листе
+        ac_headers = _headers(wb.active)
+        if "корреспондент" in ac_headers:
+            log.info(f"Авто-детект: AUTO-CREATE (колонка 'Корреспондент')")
+            return "auto-create"
+
+        log.info(f"Авто-детект не сработал (листы: {wb.sheetnames}, "
+                 f"заголовки активного: {ac_headers})")
+        return None
+    finally:
+        wb.close()
+
+
 def _prompt_attachment_dir(default_dir, description):
     """Промпт пути к папке с вложениями. Enter = default."""
     print(f"\n{description}")
@@ -816,7 +860,7 @@ def _print_summary(done_count, total, err_count, elapsed_seconds, extra_lines=No
 
 # ---------- Сценарий 1: auto-create ----------
 
-def run_auto_create():
+def run_auto_create(excel_path=None):
     """Сценарий: B=Содержание, C=Корреспондент, dummy .msg, фикс. подтип,
     безусловная регистрация + На резолюцию."""
     global start_time
@@ -827,7 +871,8 @@ def run_auto_create():
     log.info("=" * 50)
 
     base_dir = cfg.get_base_dir()
-    excel_path = _choose_xlsx(base_dir)
+    if excel_path is None:
+        excel_path = _choose_xlsx(base_dir)
 
     # Папка для dummy .msg (рядом с exe по умолчанию)
     msg_dir = _prompt_attachment_dir(
@@ -889,7 +934,7 @@ def run_auto_create():
 
 # ---------- Сценарий 2: mix ----------
 
-def run_mix():
+def run_mix(excel_path=None):
     """Сценарий: Лист2, ФИО из TextBody, .msg по Link, регистрация
     только если ФИО найдено, resume-state."""
     global start_time
@@ -900,7 +945,8 @@ def run_mix():
     log.info("=" * 50)
 
     base_dir = cfg.get_base_dir()
-    excel_path = _choose_xlsx(base_dir)
+    if excel_path is None:
+        excel_path = _choose_xlsx(base_dir)
 
     # Папка outlook_dir (для поиска .msg по Link)
     default_outlook = settings.get("outlook_dir", cfg.DEFAULTS["outlook_dir"])
@@ -1005,6 +1051,31 @@ def run_mix():
 
 # ---------- Диспетчер ----------
 
+_SCENARIO_DESCR = {
+    "mix":         "Лист2 (Link/Subject/TextBody/Тип) → ФИО из TextBody, "
+                   ".msg по Link, черновики при ненайденном ФИО",
+    "auto-create": "B=Содержание, C=Корреспондент → корреспондент из Excel, "
+                   "dummy .msg, безусловная регистрация",
+}
+
+
+def _ask_scenario_manual(reason=""):
+    """Ручной выбор сценария когда авто-детект не сработал или переопределяется."""
+    if reason:
+        print(f"\n{reason}")
+    print("\nВыбери сценарий вручную:")
+    print(f"  1. auto-create — {_SCENARIO_DESCR['auto-create']}")
+    print(f"  2. mix         — {_SCENARIO_DESCR['mix']}")
+    choice = input("Номер: ").strip()
+    if choice == "1":
+        return "auto-create"
+    if choice == "2":
+        return "mix"
+    log.error(f"Неверный выбор: {choice!r}")
+    input("Enter...")
+    sys.exit(1)
+
+
 def main():
     global settings
     settings = cfg.load()
@@ -1012,22 +1083,28 @@ def main():
     print("=" * 60)
     print("АСУД ИК — автоматизация Входящих документов")
     print("=" * 60)
-    print("\nВыбери сценарий:")
-    print("  1. auto-create   — Excel: B=Содержание, C=Корреспондент.")
-    print("                     Корреспондент из Excel, создаёт если нет в АСУД,")
-    print("                     регистрирует + На резолюцию.")
-    print("  2. mix           — Excel Лист2 (A=Link, B=Subject, C=TextBody, D=Тип).")
-    print("                     ФИО из TextBody, .msg по Link из папки,")
-    print("                     черновик если ФИО не нашлось. Resume после крэша.")
-    choice = input("\nНомер: ").strip()
 
-    if choice == "1":
-        run_auto_create()
-    elif choice == "2":
-        run_mix()
+    base_dir = cfg.get_base_dir()
+    excel_path = _choose_xlsx(base_dir)
+
+    # Авто-детект сценария по структуре xlsx
+    scenario = _detect_scenario(excel_path)
+
+    if scenario:
+        print(f"\nАвто-детект: {scenario} — {_SCENARIO_DESCR[scenario]}")
+        ans = input("Принять? [Enter=да, 'нет' = выбрать вручную]: ").strip().lower()
+        if ans in ("нет", "н", "n", "no"):
+            scenario = _ask_scenario_manual()
     else:
-        log.error(f"Неверный выбор: {choice!r}. Ожидается 1 или 2.")
-        input("Enter...")
+        scenario = _ask_scenario_manual(
+            "Не удалось определить сценарий по структуре файла.")
+
+    if scenario == "auto-create":
+        run_auto_create(excel_path)
+    elif scenario == "mix":
+        run_mix(excel_path)
+    else:
+        log.error(f"Неизвестный сценарий: {scenario}")
         sys.exit(1)
 
 
