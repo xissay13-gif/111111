@@ -507,17 +507,35 @@ def main():
         driver.get(url)
         wait_asud_loaded(driver)
 
+        done_count, err_count = 0, 0
         for i, doc in enumerate(docs, 1):
             try:
                 create_one_document(driver, doc, i, len(docs))
+                done_count += 1
             except Exception as e:
                 log.error(f"ОШИБКА документ {i}: {e}")
+                err_count += 1
                 driver.get(url)
                 wait_asud_loaded(driver)
                 continue
 
-        elapsed = timedelta(seconds=time.monotonic() - start_time)
-        log.info(f"ГОТОВО! Документов: {len(docs)}, время: {elapsed}")
+        elapsed_seconds = time.monotonic() - start_time
+        elapsed = timedelta(seconds=int(elapsed_seconds))
+        avg = timedelta(seconds=int(elapsed_seconds / done_count)) if done_count else None
+
+        summary = [
+            "",
+            "=" * 60,
+            f"ГОТОВО!",
+            f"  Обработано: {done_count} / {len(docs)}",
+            f"  Ошибок:     {err_count}",
+            f"  Затрачено:  {elapsed}" + (f"  (в среднем {avg}/док)" if avg else ""),
+            "=" * 60,
+        ]
+        for line in summary:
+            log.info(line)
+            print(line)
+
         input("\nEnter для закрытия...")
 
     except Exception as e:
