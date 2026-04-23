@@ -1,7 +1,7 @@
 """
 attachments.py — Прикрепление .msg файла (пустышки) к документу.
 
-Ищет .msg рядом с exe, прикрепляет через pywinauto.
+Ищет .msg в указанной папке (рекурсивно), прикрепляет через pywinauto.
 """
 
 import os
@@ -22,12 +22,27 @@ except ImportError:
     PYWINAUTO = False
 
 
-def get_dummy_msg(base_dir):
-    """Ищет .msg-пустышку рядом с exe."""
-    msg_files = [f for f in os.listdir(base_dir) if f.lower().endswith('.msg')]
-    if msg_files:
-        return os.path.join(base_dir, msg_files[0])
-    return None
+def get_dummy_msg(search_dir):
+    """Ищет первый .msg файл в search_dir (рекурсивно по подпапкам).
+    Возвращает полный путь или None."""
+    if not search_dir or not os.path.isdir(search_dir):
+        return None
+    found = []
+    try:
+        for root, _dirs, files in os.walk(search_dir):
+            for f in files:
+                if f.lower().endswith('.msg'):
+                    found.append(os.path.join(root, f))
+    except Exception as e:
+        log.warning(f"Ошибка обхода {search_dir}: {e}")
+        return None
+    if not found:
+        return None
+    found.sort()  # детерминированно — по алфавиту
+    if len(found) > 1:
+        log.info(f"Найдено {len(found)} .msg, беру первый: "
+                 f"{os.path.relpath(found[0], search_dir)}")
+    return found[0]
 
 
 def attach_content(driver, file_path):
