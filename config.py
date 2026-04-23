@@ -16,6 +16,11 @@ log = logging.getLogger("asud.config")
 DEFAULTS = {
     "asud_url": "https://asud.interrao.ru/asudik/",
     "timeout": 20,
+    # Attach to already-running Edge (DevTools remote debugging).
+    # Запусти Edge с --remote-debugging-port=<port> + отдельной --user-data-dir,
+    # и скрипт подхватит открытое окно вместо запуска нового.
+    # Если порт закрыт — автоматически fallback на обычный запуск.
+    "debugger_port": 9222,
     # Вложения
     "outlook_dir": r"D:\OutlookSubjects",  # mix: поиск .msg по Link
     # Корреспонденты / адресаты

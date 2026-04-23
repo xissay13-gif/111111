@@ -845,14 +845,55 @@ def _prompt_attachment_dir(default_dir, description):
     return chosen
 
 
+def _is_port_open(host, port, timeout=0.5):
+    """Проверяет открыт ли TCP-порт (Edge DevTools должны отвечать)."""
+    import socket
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except (socket.error, OSError):
+        return False
+
+
 def _start_browser(base_dir):
-    """Запускает Edge с msedgedriver.exe из base_dir."""
+    """Запускает Edge с msedgedriver.exe из base_dir.
+
+    Если в config задан debugger_port и Edge на этом порту доступен —
+    подключается к уже открытому окну (DevTools remote debugging).
+    Иначе — запускает новый Edge как обычно.
+
+    Возвращает (driver, attached: bool). attached=True означает что мы
+    подхватили чужой процесс и в конце не должны его закрывать.
+    """
     driver_path = os.path.join(base_dir, "msedgedriver.exe")
     if not os.path.exists(driver_path):
         log.error(f"msedgedriver.exe не найден в {base_dir}")
         input("Enter...")
         sys.exit(1)
 
+    service = EdgeService(executable_path=driver_path)
+    debugger_port = settings.get("debugger_port")
+
+    if debugger_port and _is_port_open("127.0.0.1", int(debugger_port)):
+        try:
+            options = EdgeOptions()
+            options.add_experimental_option(
+                "debuggerAddress", f"127.0.0.1:{debugger_port}")
+            driver = webdriver.Edge(service=service, options=options)
+            log.info(f"Подключился к уже открытому Edge на :{debugger_port} "
+                     f"(текущий URL: {driver.current_url or '?'})")
+            return driver, True
+        except Exception as e:
+            log.warning(f"Не удалось подключиться к Edge на :{debugger_port}: {e}. "
+                        f"Запускаю новый браузер.")
+    elif debugger_port:
+        log.info(f"Edge не запущен с debug-портом {debugger_port}. "
+                 f"Запускаю новый браузер. Чтобы подключаться к открытому — "
+                 f"запусти Edge так: "
+                 f'msedge.exe --remote-debugging-port={debugger_port} '
+                 f'--user-data-dir=%TEMP%\\edge-asud')
+
+    # Обычный запуск
     options = EdgeOptions()
     options.add_argument("--start-maximized")
     options.add_argument("--auth-server-whitelist=*.interrao.ru")
@@ -860,8 +901,34 @@ def _start_browser(base_dir):
     options.add_argument("--log-level=3")
     options.add_experimental_option('excludeSwitches', ['enable-logging'])
 
-    service = EdgeService(executable_path=driver_path)
-    return webdriver.Edge(service=service, options=options)
+    driver = webdriver.Edge(service=service, options=options)
+    return driver, False
+
+
+def _go_to_asud(driver, url, attached):
+    """Переходит на АСУД. Если attached и уже на АСУД-странице — не перегружаем."""
+    try:
+        current = (driver.current_url or "").lower()
+    except Exception:
+        current = ""
+    if attached and "asudik" in current:
+        log.info(f"Использую открытую вкладку АСУД: {driver.current_url}")
+    else:
+        log.info(f"Открываю {url}")
+        driver.get(url)
+    wait_asud_loaded(driver)
+
+
+def _maybe_quit(driver, attached):
+    """Закрывает Edge только если сами его запускали. Attached — оставляем."""
+    if attached:
+        log.info("Оставляю Edge открытым (подключались к запущенному ранее)")
+    else:
+        try:
+            driver.quit()
+            log.info("Браузер закрыт")
+        except Exception as e:
+            log.warning(f"Ошибка закрытия браузера: {e}")
 
 
 def _print_summary(done_count, total, err_count, elapsed_seconds, extra_lines=None):
@@ -928,12 +995,10 @@ def run_auto_create(excel_path=None):
         print("Отменено.")
         sys.exit(0)
 
-    driver = _start_browser(base_dir)
+    driver, attached = _start_browser(base_dir)
     try:
         url = settings.get("asud_url", cfg.DEFAULTS["asud_url"])
-        log.info(f"Открываю {url}")
-        driver.get(url)
-        wait_asud_loaded(driver)
+        _go_to_asud(driver, url, attached)
 
         done_count, err_count = 0, 0
         for i, doc in enumerate(docs, 1):
@@ -955,8 +1020,7 @@ def run_auto_create(excel_path=None):
         log.error(f"Ошибка: {e}")
         input("Enter...")
     finally:
-        driver.quit()
-        log.info("Браузер закрыт")
+        _maybe_quit(driver, attached)
 
 
 # ---------- Сценарий 2: mix ----------
@@ -1034,12 +1098,10 @@ def run_mix(excel_path=None):
         print("Отменено.")
         sys.exit(0)
 
-    driver = _start_browser(base_dir)
+    driver, attached = _start_browser(base_dir)
     try:
         url = settings.get("asud_url", cfg.DEFAULTS["asud_url"])
-        log.info(f"Открываю {url}")
-        driver.get(url)
-        wait_asud_loaded(driver)
+        _go_to_asud(driver, url, attached)
 
         done_count, err_count = 0, 0
         for i, doc in enumerate(docs, 1):
@@ -1072,8 +1134,7 @@ def run_mix(excel_path=None):
         log.error(f"Ошибка: {e}")
         input("Enter...")
     finally:
-        driver.quit()
-        log.info("Браузер закрыт")
+        _maybe_quit(driver, attached)
 
 
 # ---------- Диспетчер ----------
