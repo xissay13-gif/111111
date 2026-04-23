@@ -428,22 +428,7 @@ def main():
             log.error("Неверный выбор")
             sys.exit(1)
 
-    # Папка с .msg-пустышкой — интерактивный ввод
-    # (Enter = рядом с exe; можно указать любую папку, поиск рекурсивный)
-    print(f"\nПапка с .msg-пустышкой (поиск рекурсивно по подпапкам).")
-    print(f"Нажми Enter, чтобы использовать: {base_dir}")
-    user_dir = input("Путь: ").strip().strip('"').strip("'")
-    msg_search_dir = user_dir if user_dir else base_dir
-    if not os.path.isdir(msg_search_dir):
-        log.warning(f"Папка '{msg_search_dir}' не существует — "
-                    f"пустышка не будет найдена")
-    msg_path = get_dummy_msg(msg_search_dir)
-    if msg_path:
-        log.info(f"Пустышка: {os.path.basename(msg_path)}")
-    else:
-        log.warning(f"В {msg_search_dir} не найдено .msg-файлов — "
-                    f"документы будут без вложений")
-
+    msg_path = get_dummy_msg(base_dir)
     docs = load_excel(excel_path)
     for doc in docs:
         doc["файл"] = msg_path
