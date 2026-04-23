@@ -655,19 +655,21 @@ def process_mix(driver, doc_data, index, total):
         log.info(f"Прикрепляю: {os.path.basename(attach_path)}")
         attach_content(driver, attach_path)
         wait_modal_closed(driver)
-        # Реальный (не dummy) файл → переносим в Завершено/
-        if attach_path != dummy_path:
-            move_to_done(attach_path, outlook_dir)
     else:
         log.info("Нет файла — пропускаю")
 
     # [7] Регистрация (если ФИО найдено) или черновик
     if doc_data["корр_найден"]:
         register_and_resolve(driver, index, total)
+        # После успешной регистрации — реальный (не dummy) .msg → Завершено/
+        # В черновиках НЕ перемещаем: файл нужен пользователю для ручной доработки.
+        if attach_path and attach_path != dummy_path:
+            move_to_done(attach_path, outlook_dir)
     else:
         log.warning(f"Row {doc_data['row_idx']}: ФИО НЕ найдено — "
                     f"оставляю в ЧЕРНОВИКАХ для ручной доработки "
-                    f"(тема: {doc_data['тема'][:60]})")
+                    f"(тема: {doc_data['тема'][:60]}). "
+                    f"Файл НЕ перемещаю в Завершено — лежит на месте.")
 
     close_card_and_wait_main(driver)
 
