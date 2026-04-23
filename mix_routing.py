@@ -785,9 +785,24 @@ def main():
                 wait_asud_loaded(driver)
                 continue
 
-        elapsed = timedelta(seconds=time.monotonic() - start_time)
-        log.info(f"ГОТОВО! Обработано: {done_count}/{len(docs)} "
-                 f"(ошибок: {err_count}, в черновиках: {unknown}), время: {elapsed}")
+        elapsed_seconds = time.monotonic() - start_time
+        elapsed = timedelta(seconds=int(elapsed_seconds))
+        avg = timedelta(seconds=int(elapsed_seconds / done_count)) if done_count else None
+
+        summary = [
+            "",
+            "=" * 60,
+            f"ГОТОВО!",
+            f"  Обработано:   {done_count} / {len(docs)}",
+            f"  Ошибок:       {err_count}",
+            f"  В черновиках: {unknown}",
+            f"  Затрачено:    {elapsed}" + (f"  (в среднем {avg}/док)" if avg else ""),
+            "=" * 60,
+        ]
+        for line in summary:
+            log.info(line)
+            print(line)
+
         if unknown:
             log.warning(f"Проверьте {unknown} документов в черновиках — "
                         f"ФИО не извлечено автоматически")
