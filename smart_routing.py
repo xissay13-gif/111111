@@ -114,18 +114,44 @@ def load_excel(file_path):
 # ================= FORM FILLING =================
 
 def fill_text(driver, text):
-    """Заполняет краткое содержание (textarea)."""
+    """Заполняет краткое содержание (textarea). JS-ввод (атомарный),
+    send_keys как fallback."""
     try:
         areas = driver.find_elements(By.TAG_NAME, "textarea")
         visible = [a for a in areas if a.is_displayed()]
-        if visible:
-            visible[0].click()
-            time.sleep(0.3)
-            visible[0].clear()
-            visible[0].send_keys(text)
-            log.info("Краткое содержание заполнено")
-        else:
+        if not visible:
             log.warning("Textarea не найдена")
+            time.sleep(0.5)
+            return
+        ta = visible[0]
+        # JS-ввод: атомарно, без потерь символов на длинных TextBody
+        js_ok = False
+        try:
+            driver.execute_script("""
+                var el = arguments[0], value = arguments[1];
+                el.focus();
+                el.value = value;
+                el.dispatchEvent(new Event('input', {bubbles:true}));
+                el.dispatchEvent(new Event('change', {bubbles:true}));
+            """, ta, text)
+            # Верификация: значение реально установилось
+            actual = (ta.get_attribute('value') or '')
+            if actual.strip() == text.strip():
+                log.info(f"Краткое содержание: JS-ввод ({len(text)} символов)")
+                js_ok = True
+            else:
+                log.warning(f"JS-ввод не закрепился "
+                            f"(ожидал {len(text)} симв., получил {len(actual)}), "
+                            f"падаю в send_keys")
+        except Exception as e:
+            log.warning(f"JS-ввод textarea упал: {e}, падаю в send_keys")
+
+        if not js_ok:
+            ta.click()
+            time.sleep(0.3)
+            ta.clear()
+            ta.send_keys(text)
+            log.info("Краткое содержание: send_keys (fallback)")
     except Exception as e:
         log.error(f"Ошибка заполнения содержания: {e}")
     time.sleep(0.5)
