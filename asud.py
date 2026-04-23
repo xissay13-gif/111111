@@ -1,16 +1,20 @@
 """
-mix_routing.py — Пакетное создание Входящих документов (auto-create + smart-routing).
+asud.py — Пакетное создание Входящих документов в АСУД ИК.
 
-Читает Excel (Лист2), извлекает ФИО корреспондента из TextBody.
-Для каждой строки:
-  - Определяет тип документа по индексу (колонка D)
-  - Создаёт карточку, заполняет поля
-  - Прикрепляет .msg из D:\\OutlookSubjects по Link
-  - Если ФИО найдено → регистрирует + На резолюцию + Да
-  - Если ФИО не найдено → корреспондент="Неизвестный...", оставляет в ЧЕРНОВИКАХ
-    + WARNING в логе (чтобы вручную доработать после прогона)
+При запуске выбирается сценарий:
 
-Excel Лист2: A=Link, B=Subject, C=TextBody, D=Тип, E=To (игнорируем — пересыльщик).
+  1. auto-create — Excel: B=Содержание, C=Корреспондент.
+     Корреспондент берётся из Excel; если его нет в АСУД — создаётся
+     карточка физ. лица. Вид документа — фиксированный (config.doc_subtype).
+     Вложение — dummy .msg рядом с exe. Регистрирует + На резолюцию.
+
+  2. mix — Excel: Лист2 (A=Link, B=Subject, C=TextBody, D=Тип, E=To).
+     ФИО корреспондента извлекается из TextBody (regex по маркеру "Ф.И.О.:"
+     или 3-словному паттерну с отчеством). Вид документа — из колонки D
+     через DOC_TYPE_MAP. Вложение — .msg по Link из outlook_dir
+     (рекурсивно по подпапкам). Если ФИО найдено → регистрация;
+     если не найдено → черновик + WARNING. Resume после крэша
+     через per-xlsx state-файл.
 
 Модули:
   config.py        — настройки (+ config.json)
@@ -126,8 +130,8 @@ def save_state(xlsx_path, processed_set):
         log.warning(f"Не удалось сохранить state {path}: {e}")
 
 
-def load_excel(file_path):
-    """Читает Лист2. Колонки: A=Link, B=Subject, C=TextBody, D=Тип (index).
+def load_excel_mix(file_path):
+    """[MIX] Читает Лист2. Колонки: A=Link, B=Subject, C=TextBody, D=Тип.
 
     ФИО корреспондента извлекается из TextBody.
     Если не найдено — ставится заглушка (unknown_correspondent) и флаг corr_found=False
@@ -202,6 +206,28 @@ def load_excel(file_path):
     return rows
 
 
+def load_excel_auto_create(file_path):
+    """[AUTO-CREATE] Читает активный лист. Колонки: B=Содержание, C=Корреспондент."""
+    wb = openpyxl.load_workbook(file_path, data_only=True)
+    ws = wb.active
+    rows = []
+    for row_idx, row in enumerate(ws.iter_rows(min_row=2, max_row=ws.max_row,
+                                               values_only=True), 2):
+        if not row or len(row) < 3:
+            continue
+        content = row[1]  # B
+        corr = row[2]     # C
+        if content and corr:
+            rows.append({
+                "row_idx": row_idx,
+                "содержание": str(content).strip(),
+                "корреспондент": str(corr).strip(),
+            })
+    wb.close()
+    log.info(f"Загружено: {len(rows)} документов")
+    return rows
+
+
 # ================= FORM FILLING =================
 
 def fill_text(driver, text):
@@ -222,16 +248,8 @@ def fill_text(driver, text):
     time.sleep(0.5)
 
 
-def fill_corr_number(driver, link=None):
-    """Заполняет 'Номер у корреспондента' = 'б/н <link>'."""
-    if isinstance(link, (datetime, date)):
-        link_str = link.strftime("%d.%m.%Y %H-%M-%S")
-    elif link:
-        link_str = str(link).strip()
-    else:
-        link_str = ""
-    value = f"б/н {link_str}" if link_str else "б/н"
-
+def fill_corr_number(driver, value):
+    """Заполняет 'Номер у корреспондента' готовым значением (строкой)."""
     inp = find_input_near_label(driver, "Номер у корреспондента")
     if not inp:
         log.warning("Поле 'Номер у корреспондента' не найдено")
@@ -564,27 +582,37 @@ def close_card_and_wait_main(driver):
 
 # ================= DOCUMENT FLOW =================
 
-def create_one_document(driver, doc_data, index, total):
-    """Создаёт один входящий документ."""
+def _link_to_corr_number(link):
+    """Строит 'Номер у корреспондента' из Link: 'б/н <ISO-дата>' или 'б/н'."""
+    if isinstance(link, (datetime, date)):
+        return f"б/н {link.strftime('%d.%m.%Y %H-%M-%S')}"
+    if link:
+        s = str(link).strip()
+        return f"б/н {s}" if s else "б/н"
+    return "б/н"
+
+
+def process_mix(driver, doc_data, index, total):
+    """[MIX] Создаёт один входящий документ по схеме mix-сценария."""
     log.info(f"{'='*50}")
     log.info(f"ДОКУМЕНТ {index}/{total}: {doc_data['тема'][:60]}")
     log.info(f"Корреспондент: {doc_data['корреспондент']} "
              f"({'найден ' + (doc_data['корр_источник'] or '') if doc_data['корр_найден'] else 'ЗАГЛУШКА'})")
     log.info(f"Тип: {doc_data['тип_название']}")
 
-    # [1/7] Кнопка создания
+    # [1] Кнопка создания
     el = WebDriverWait(driver, cfg.DEFAULTS["timeout"]).until(
         EC.presence_of_element_located((By.ID, "mainscreen-create-button")))
     time.sleep(1)
     click(driver, el, "Создать документ")
     time.sleep(3)
 
-    # [2/7] Входящий документ
+    # [2] Входящий документ
     wait_and_click(driver, By.XPATH,
         "//div[contains(text(),'Входящий документ')]", "Входящий документ")
     time.sleep(1)
 
-    # [3/7] Вид
+    # [3] Вид (по DOC_TYPE_MAP)
     subtype = doc_data.get("тип_название", "Письма, заявления и жалобы граждан, акционеров")
     short = subtype[:30]
     wait_and_click(driver, By.XPATH,
@@ -596,10 +624,10 @@ def create_one_document(driver, doc_data, index, total):
         "Создать документ")
     time.sleep(5)
 
-    # [4/7] Заполнение формы
+    # [4] Заполнение формы
     fill_text(driver, doc_data["содержание"])
     fill_correspondent_field(driver, doc_data["корреспондент"])
-    fill_corr_number(driver, doc_data.get("link"))
+    fill_corr_number(driver, _link_to_corr_number(doc_data.get("link")))
     fill_corr_date(driver)
 
     for addr in settings.get("addressees", cfg.DEFAULTS["addressees"]):
@@ -609,7 +637,7 @@ def create_one_document(driver, doc_data, index, total):
     fill_delivery_method(driver)
     time.sleep(0.5)
 
-    # [5/7] Сохранение
+    # [5] Сохранение
     try:
         save_btn = WebDriverWait(driver, cfg.DEFAULTS["timeout"]).until(
             EC.element_to_be_clickable((By.ID, "header-save-btn")))
@@ -619,7 +647,7 @@ def create_one_document(driver, doc_data, index, total):
     except Exception as e:
         log.error(f"Ошибка сохранения: {e}")
 
-    # [6/7] Прикрепление
+    # [6] Прикрепление по Link
     outlook_dir = settings.get("outlook_dir", cfg.DEFAULTS["outlook_dir"])
     attach_path = find_msg_by_link(doc_data.get("link"), outlook_dir, doc_data.get("файл"))
     if attach_path:
@@ -629,7 +657,7 @@ def create_one_document(driver, doc_data, index, total):
     else:
         log.info("Нет файла — пропускаю")
 
-    # [7/7] Регистрация (если ФИО найдено) или черновик
+    # [7] Регистрация (если ФИО найдено) или черновик
     if doc_data["корр_найден"]:
         register_and_resolve(driver, index, total)
     else:
@@ -640,62 +668,251 @@ def create_one_document(driver, doc_data, index, total):
     close_card_and_wait_main(driver)
 
 
+def process_auto_create(driver, doc_data, index, total):
+    """[AUTO-CREATE] Создаёт один входящий документ:
+    корреспондент из Excel, фикс. подтип, dummy .msg, безусловная регистрация."""
+    log.info(f"{'='*50}")
+    log.info(f"ДОКУМЕНТ {index}/{total}")
+    log.info(f"Корреспондент: {doc_data['корреспондент']}")
+    log.info(f"Содержание: {doc_data['содержание'][:60]}...")
+
+    # [1] Кнопка создания
+    el = WebDriverWait(driver, cfg.DEFAULTS["timeout"]).until(
+        EC.presence_of_element_located((By.ID, "mainscreen-create-button")))
+    time.sleep(1)
+    click(driver, el, "Создать документ")
+    time.sleep(3)
+
+    # [2] Входящий документ
+    wait_and_click(driver, By.XPATH,
+        "//div[contains(text(),'Входящий документ')]", "Входящий документ")
+    time.sleep(1)
+
+    # [3] Вид (фиксированный из config)
+    subtype = settings.get("doc_subtype", cfg.DEFAULTS["doc_subtype"])
+    short = subtype[:30]
+    wait_and_click(driver, By.XPATH,
+        f"//div[contains(text(),'{short}')] | //td[contains(text(),'{short}')]", subtype)
+    time.sleep(0.5)
+
+    wait_and_click(driver, By.XPATH,
+        "//button[contains(text(),'Создать документ')] | //div[contains(text(),'Создать документ')]",
+        "Создать документ")
+    time.sleep(5)
+
+    # [4] Заполнение формы
+    fill_text(driver, doc_data["содержание"])
+    fill_correspondent_field(driver, doc_data["корреспондент"])
+    fill_corr_number(driver, f"б/н ({index})")
+    fill_corr_date(driver)
+
+    for addr in settings.get("addressees", cfg.DEFAULTS["addressees"]):
+        add_addressee(driver, addr)
+        time.sleep(0.5)
+
+    fill_delivery_method(driver)
+    time.sleep(0.5)
+
+    # [5] Сохранение
+    try:
+        save_btn = WebDriverWait(driver, cfg.DEFAULTS["timeout"]).until(
+            EC.element_to_be_clickable((By.ID, "header-save-btn")))
+        click(driver, save_btn, "Сохранить")
+        time.sleep(3)
+        log.info(f"Документ {index}/{total} сохранён")
+    except Exception as e:
+        log.error(f"Ошибка сохранения: {e}")
+
+    # [6] Прикрепление (dummy .msg)
+    if doc_data.get("файл"):
+        attach_content(driver, doc_data["файл"])
+        wait_modal_closed(driver)
+    else:
+        log.info("Нет пустышки .msg — пропускаю вложение")
+
+    # [7] Регистрация безусловная
+    register_and_resolve(driver, index, total)
+    close_card_and_wait_main(driver)
+
+
 # ================= MAIN =================
 
 settings = {}
 
 
-def main():
-    global settings
-    settings = cfg.load()
-
-    log.info("=" * 50)
-    log.info("АСУД ИК — MIX (auto-create + smart-routing)")
-    log.info("=" * 50)
-
-    base_dir = cfg.get_base_dir()
-
-    # Excel
+def _choose_xlsx(base_dir):
+    """Интерактивно выбирает .xlsx файл рядом с exe."""
     xlsx_files = [f for f in os.listdir(base_dir) if f.lower().endswith('.xlsx')]
     if not xlsx_files:
         log.error(f"Нет .xlsx в {base_dir}")
         input("Enter...")
         sys.exit(1)
-    elif len(xlsx_files) == 1:
-        excel_path = os.path.join(base_dir, xlsx_files[0])
+    if len(xlsx_files) == 1:
         log.info(f"Файл: {xlsx_files[0]}")
-    else:
-        print(f"\nНайдено {len(xlsx_files)} xlsx-файлов:")
-        for i, f in enumerate(xlsx_files, 1):
-            print(f"  {i}. {f}")
-        choice = input("Выбери номер: ").strip()
-        try:
-            excel_path = os.path.join(base_dir, xlsx_files[int(choice) - 1])
-        except (ValueError, IndexError):
-            log.error("Неверный выбор")
-            sys.exit(1)
+        return os.path.join(base_dir, xlsx_files[0])
+    print(f"\nНайдено {len(xlsx_files)} xlsx-файлов:")
+    for i, f in enumerate(xlsx_files, 1):
+        print(f"  {i}. {f}")
+    choice = input("Выбери номер: ").strip()
+    try:
+        return os.path.join(base_dir, xlsx_files[int(choice) - 1])
+    except (ValueError, IndexError):
+        log.error("Неверный выбор")
+        sys.exit(1)
 
-    # Папка с .msg — интерактивный ввод (Enter = дефолт из config)
-    default_outlook = settings.get("outlook_dir", cfg.DEFAULTS["outlook_dir"])
-    print(f"\nПапка с .msg-файлами (поиск рекурсивно по подпапкам).")
-    print(f"Нажми Enter, чтобы использовать: {default_outlook}")
+
+def _prompt_attachment_dir(default_dir, description):
+    """Промпт пути к папке с вложениями. Enter = default."""
+    print(f"\n{description}")
+    print(f"Нажми Enter, чтобы использовать: {default_dir}")
     user_dir = input("Путь: ").strip().strip('"').strip("'")
-    if user_dir:
-        settings["outlook_dir"] = user_dir
-    outlook_dir = settings["outlook_dir"]
-    if not os.path.isdir(outlook_dir):
-        log.warning(f"Папка '{outlook_dir}' не существует — "
-                    f"все вложения уйдут как пустышки")
+    chosen = user_dir if user_dir else default_dir
+    if chosen and not os.path.isdir(chosen):
+        log.warning(f"Папка '{chosen}' не существует")
     else:
-        log.info(f"Папка вложений: {outlook_dir}")
+        log.info(f"Папка: {chosen}")
+    return chosen
 
-    # Пустышка (для случаев когда .msg по link не найден)
-    msg_path = get_dummy_msg(base_dir)
+
+def _start_browser(base_dir):
+    """Запускает Edge с msedgedriver.exe из base_dir."""
+    driver_path = os.path.join(base_dir, "msedgedriver.exe")
+    if not os.path.exists(driver_path):
+        log.error(f"msedgedriver.exe не найден в {base_dir}")
+        input("Enter...")
+        sys.exit(1)
+
+    options = EdgeOptions()
+    options.add_argument("--start-maximized")
+    options.add_argument("--auth-server-whitelist=*.interrao.ru")
+    options.add_argument("--auth-negotiate-delegate-whitelist=*.interrao.ru")
+    options.add_argument("--log-level=3")
+    options.add_experimental_option('excludeSwitches', ['enable-logging'])
+
+    service = EdgeService(executable_path=driver_path)
+    return webdriver.Edge(service=service, options=options)
+
+
+def _print_summary(done_count, total, err_count, elapsed_seconds, extra_lines=None):
+    """Выводит итоговую плашку с временем."""
+    elapsed = timedelta(seconds=int(elapsed_seconds))
+    avg = timedelta(seconds=int(elapsed_seconds / done_count)) if done_count else None
+    lines = [
+        "",
+        "=" * 60,
+        "ГОТОВО!",
+        f"  Обработано: {done_count} / {total}",
+        f"  Ошибок:     {err_count}",
+    ]
+    if extra_lines:
+        lines.extend(extra_lines)
+    lines.append(f"  Затрачено:  {elapsed}" +
+                 (f"  (в среднем {avg}/док)" if avg else ""))
+    lines.append("=" * 60)
+    for line in lines:
+        log.info(line)
+        print(line)
+
+
+# ---------- Сценарий 1: auto-create ----------
+
+def run_auto_create():
+    """Сценарий: B=Содержание, C=Корреспондент, dummy .msg, фикс. подтип,
+    безусловная регистрация + На резолюцию."""
+    global start_time
+    start_time = time.monotonic()
+
+    log.info("=" * 50)
+    log.info("АСУД ИК — сценарий AUTO-CREATE")
+    log.info("=" * 50)
+
+    base_dir = cfg.get_base_dir()
+    excel_path = _choose_xlsx(base_dir)
+
+    # Папка для dummy .msg (рядом с exe по умолчанию)
+    msg_dir = _prompt_attachment_dir(
+        base_dir, "Папка с .msg-пустышкой (поиск рекурсивно по подпапкам).")
+    msg_path = get_dummy_msg(msg_dir)
     if msg_path:
         log.info(f"Пустышка: {os.path.basename(msg_path)}")
+    else:
+        log.warning(f"В {msg_dir} не найдено .msg — документы без вложений")
 
-    # Данные
-    docs = load_excel(excel_path)
+    docs = load_excel_auto_create(excel_path)
+    for doc in docs:
+        doc["файл"] = msg_path
+
+    if not docs:
+        log.error("Нет данных!")
+        input("Enter...")
+        sys.exit(1)
+
+    print(f"\nПервые 5:")
+    for i, d in enumerate(docs[:5], 1):
+        print(f"  {i}. {d['корреспондент'][:30]} | {d['содержание'][:50]}...")
+    print(f"\nВсего: {len(docs)}")
+
+    if input("Начать? (да/нет): ").strip().lower() not in ("да", "д", "y", "yes", ""):
+        print("Отменено.")
+        sys.exit(0)
+
+    driver = _start_browser(base_dir)
+    try:
+        url = settings.get("asud_url", cfg.DEFAULTS["asud_url"])
+        log.info(f"Открываю {url}")
+        driver.get(url)
+        wait_asud_loaded(driver)
+
+        done_count, err_count = 0, 0
+        for i, doc in enumerate(docs, 1):
+            try:
+                process_auto_create(driver, doc, i, len(docs))
+                done_count += 1
+            except Exception as e:
+                log.error(f"ОШИБКА документ {i}: {e}")
+                err_count += 1
+                driver.get(url)
+                wait_asud_loaded(driver)
+                continue
+
+        _print_summary(done_count, len(docs), err_count,
+                       time.monotonic() - start_time)
+        input("\nEnter для закрытия...")
+
+    except Exception as e:
+        log.error(f"Ошибка: {e}")
+        input("Enter...")
+    finally:
+        driver.quit()
+        log.info("Браузер закрыт")
+
+
+# ---------- Сценарий 2: mix ----------
+
+def run_mix():
+    """Сценарий: Лист2, ФИО из TextBody, .msg по Link, регистрация
+    только если ФИО найдено, resume-state."""
+    global start_time
+    start_time = time.monotonic()
+
+    log.info("=" * 50)
+    log.info("АСУД ИК — сценарий MIX")
+    log.info("=" * 50)
+
+    base_dir = cfg.get_base_dir()
+    excel_path = _choose_xlsx(base_dir)
+
+    # Папка outlook_dir (для поиска .msg по Link)
+    default_outlook = settings.get("outlook_dir", cfg.DEFAULTS["outlook_dir"])
+    outlook_dir = _prompt_attachment_dir(
+        default_outlook, "Папка с .msg-файлами (поиск рекурсивно по подпапкам).")
+    settings["outlook_dir"] = outlook_dir
+
+    msg_path = get_dummy_msg(base_dir)
+    if msg_path:
+        log.info(f"Пустышка (fallback): {os.path.basename(msg_path)}")
+
+    docs = load_excel_mix(excel_path)
     for doc in docs:
         doc["файл"] = msg_path
 
@@ -711,9 +928,9 @@ def main():
                            if _link_key(d.get("link")) in processed]
         if done_in_current:
             print(f"\nВ state-файле {len(done_in_current)} ранее обработанных документов.")
-            print("  Enter / 'да'  — ПРОПУСТИТЬ их, продолжить с остальных (по умолчанию)")
-            print("  'нет'         — обработать ВСЁ заново (дубли в АСУД! не рекомендуется)")
-            print("  'сброс'       — обнулить state и обработать всё (для полного старта)")
+            print("  Enter / 'да'  — ПРОПУСТИТЬ их, продолжить с остальных")
+            print("  'нет'         — обработать ВСЁ заново (дубли!)")
+            print("  'сброс'       — обнулить state и обработать всё")
             ans = input("Что делаем? [да]: ").strip().lower()
             if ans in ("сброс", "reset"):
                 save_state(excel_path, set())
@@ -728,7 +945,7 @@ def main():
                 log.info(f"Пропускаю {before - len(docs)} обработанных, "
                          f"осталось {len(docs)}")
                 if not docs:
-                    log.info("Все строки уже обработаны — нечего делать.")
+                    log.info("Все строки уже обработаны.")
                     input("Enter...")
                     sys.exit(0)
 
@@ -738,30 +955,13 @@ def main():
     for i, d in enumerate(docs[:5], 1):
         flag = 'OK' if d["корр_найден"] else '!!'
         print(f"  {i}. [{d['тип_индекс']}] {flag} {d['корреспондент'][:30]} | {d['тема'][:50]}")
-    print(f"\nВсего к обработке: {len(docs)}  (ФИО: {known}, заглушка: {unknown})")
+    print(f"\nВсего: {len(docs)}  (ФИО: {known}, заглушка: {unknown})")
 
-    confirm = input("Начать? (да/нет): ").strip().lower()
-    if confirm not in ("да", "д", "y", "yes", ""):
+    if input("Начать? (да/нет): ").strip().lower() not in ("да", "д", "y", "yes", ""):
         print("Отменено.")
         sys.exit(0)
 
-    # Браузер
-    driver_path = os.path.join(base_dir, "msedgedriver.exe")
-    if not os.path.exists(driver_path):
-        log.error(f"msedgedriver.exe не найден в {base_dir}")
-        input("Enter...")
-        sys.exit(1)
-
-    options = EdgeOptions()
-    options.add_argument("--start-maximized")
-    options.add_argument("--auth-server-whitelist=*.interrao.ru")
-    options.add_argument("--auth-negotiate-delegate-whitelist=*.interrao.ru")
-    options.add_argument("--log-level=3")
-    options.add_experimental_option('excludeSwitches', ['enable-logging'])
-
-    service = EdgeService(executable_path=driver_path)
-    driver = webdriver.Edge(service=service, options=options)
-
+    driver = _start_browser(base_dir)
     try:
         url = settings.get("asud_url", cfg.DEFAULTS["asud_url"])
         log.info(f"Открываю {url}")
@@ -771,8 +971,7 @@ def main():
         done_count, err_count = 0, 0
         for i, doc in enumerate(docs, 1):
             try:
-                create_one_document(driver, doc, i, len(docs))
-                # Помечаем как обработанный сразу после успеха (до следующей итерации)
+                process_mix(driver, doc, i, len(docs))
                 key = _link_key(doc.get("link"))
                 if key:
                     processed.add(key)
@@ -785,31 +984,15 @@ def main():
                 wait_asud_loaded(driver)
                 continue
 
-        elapsed_seconds = time.monotonic() - start_time
-        elapsed = timedelta(seconds=int(elapsed_seconds))
-        avg = timedelta(seconds=int(elapsed_seconds / done_count)) if done_count else None
-
-        summary = [
-            "",
-            "=" * 60,
-            f"ГОТОВО!",
-            f"  Обработано:   {done_count} / {len(docs)}",
-            f"  Ошибок:       {err_count}",
-            f"  В черновиках: {unknown}",
-            f"  Затрачено:    {elapsed}" + (f"  (в среднем {avg}/док)" if avg else ""),
-            "=" * 60,
-        ]
-        for line in summary:
-            log.info(line)
-            print(line)
-
+        _print_summary(done_count, len(docs), err_count,
+                       time.monotonic() - start_time,
+                       extra_lines=[f"  В черновиках: {unknown}"])
         if unknown:
             log.warning(f"Проверьте {unknown} документов в черновиках — "
                         f"ФИО не извлечено автоматически")
         if err_count:
             log.warning(f"{err_count} документов упали с ошибкой. "
-                        f"Перезапуск скрипта продолжит с них "
-                        f"(уже обработанные запомнены в state-файле).")
+                        f"Перезапуск продолжит с них (state запомнил обработанные).")
         input("\nEnter для закрытия...")
 
     except Exception as e:
@@ -818,6 +1001,34 @@ def main():
     finally:
         driver.quit()
         log.info("Браузер закрыт")
+
+
+# ---------- Диспетчер ----------
+
+def main():
+    global settings
+    settings = cfg.load()
+
+    print("=" * 60)
+    print("АСУД ИК — автоматизация Входящих документов")
+    print("=" * 60)
+    print("\nВыбери сценарий:")
+    print("  1. auto-create   — Excel: B=Содержание, C=Корреспондент.")
+    print("                     Корреспондент из Excel, создаёт если нет в АСУД,")
+    print("                     регистрирует + На резолюцию.")
+    print("  2. mix           — Excel Лист2 (A=Link, B=Subject, C=TextBody, D=Тип).")
+    print("                     ФИО из TextBody, .msg по Link из папки,")
+    print("                     черновик если ФИО не нашлось. Resume после крэша.")
+    choice = input("\nНомер: ").strip()
+
+    if choice == "1":
+        run_auto_create()
+    elif choice == "2":
+        run_mix()
+    else:
+        log.error(f"Неверный выбор: {choice!r}. Ожидается 1 или 2.")
+        input("Enter...")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

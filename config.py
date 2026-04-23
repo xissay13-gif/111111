@@ -16,14 +16,20 @@ log = logging.getLogger("asud.config")
 DEFAULTS = {
     "asud_url": "https://asud.interrao.ru/asudik/",
     "timeout": 20,
-    "outlook_dir": r"D:\OutlookSubjects",
+    # Вложения
+    "outlook_dir": r"D:\OutlookSubjects",  # mix: поиск .msg по Link
+    # Корреспонденты / адресаты
     "addressees": [
         "Басманов Александр Владимирович",
         "Халецкая Юлия Владимировна",
     ],
-    "unknown_correspondent": "Неизвестный Неизвестный Неизвестный",
+    "unknown_correspondent": "Неизвестный Неизвестный Неизвестный",  # mix: заглушка когда ФИО не извлеклось
+    # Способ получения
     "delivery_method": "Электронная почта",
+    # mix
     "sheet_name": "Лист2",
+    # auto-create
+    "doc_subtype": "Письма, заявления и жалобы граждан, акционеров",
 }
 
 # Маппинг индекса из Excel → название вида в АСУД

@@ -1,8 +1,8 @@
-name: Build Mix Routing EXE
+name: Build ASUD EXE
 
 on:
   push:
-    branches: [ clean-mix ]
+    branches: [ clean-combo ]
   workflow_dispatch:
 
 jobs:
@@ -22,7 +22,7 @@ jobs:
 
     - name: Build EXE
       run: >
-        pyinstaller --onefile --name mix_routing
+        pyinstaller --onefile --name asud
         --hidden-import=selenium.webdriver.edge.webdriver
         --hidden-import=selenium.webdriver.edge.service
         --hidden-import=selenium.webdriver.edge.options
@@ -32,10 +32,10 @@ jobs:
         --hidden-import=openpyxl
         --hidden-import=pyautogui
         --hidden-import=pywinauto
-        mix_routing.py
+        asud.py
 
     - name: Upload EXE
       uses: actions/upload-artifact@v4
       with:
-        name: mix_routing
-        path: dist/mix_routing.exe
+        name: asud
+        path: dist/asud.exe
