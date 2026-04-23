@@ -762,14 +762,10 @@ def _choose_xlsx(base_dir):
 
 
 def _detect_scenario(xlsx_path):
-    """Определяет сценарий по структуре xlsx.
+    """Определяет сценарий по наличию колонки 'Link' в xlsx.
 
-    Возвращает 'mix' / 'auto-create' / None.
-
-    Правила:
-      - Лист 'Лист2' с заголовками 'Link' + 'Тип' → mix
-      - В заголовках активного листа есть 'Корреспондент' → auto-create
-      - иначе None (ручной выбор)
+    Правило простое: если хотя бы на одном листе в заголовках
+    есть колонка 'Link' → сценарий MIX; иначе → AUTO-CREATE.
     """
     try:
         wb = openpyxl.load_workbook(xlsx_path, data_only=True, read_only=True)
@@ -777,30 +773,20 @@ def _detect_scenario(xlsx_path):
         log.warning(f"Не удалось открыть xlsx для авто-детекта: {e}")
         return None
 
-    def _headers(ws):
-        try:
-            row = next(ws.iter_rows(min_row=1, max_row=1, values_only=True))
-        except StopIteration:
-            return []
-        return [str(c).strip().lower() for c in row if c is not None]
-
     try:
-        # Правило 1: mix по Лист2 с уникальными колонками Link + TextBody
-        if "Лист2" in wb.sheetnames:
-            mix_headers = _headers(wb["Лист2"])
-            if "link" in mix_headers and "textbody" in mix_headers:
-                log.info(f"Авто-детект: MIX (Лист2 с Link+TextBody)")
+        for sheet_name in wb.sheetnames:
+            ws = wb[sheet_name]
+            try:
+                row = next(ws.iter_rows(min_row=1, max_row=1, values_only=True))
+            except StopIteration:
+                continue
+            headers = [str(c).strip().lower() for c in row if c is not None]
+            if "link" in headers:
+                log.info(f"Авто-детект: MIX (колонка 'Link' на листе '{sheet_name}')")
                 return "mix"
 
-        # Правило 2: auto-create по заголовку "Корреспондент" в активном листе
-        ac_headers = _headers(wb.active)
-        if "корреспондент" in ac_headers:
-            log.info(f"Авто-детект: AUTO-CREATE (колонка 'Корреспондент')")
-            return "auto-create"
-
-        log.info(f"Авто-детект не сработал (листы: {wb.sheetnames}, "
-                 f"заголовки активного: {ac_headers})")
-        return None
+        log.info("Авто-детект: AUTO-CREATE (колонка 'Link' не найдена ни на одном листе)")
+        return "auto-create"
     finally:
         wb.close()
 
