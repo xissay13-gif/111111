@@ -231,18 +231,53 @@ def load_excel_auto_create(file_path):
 # ================= FORM FILLING =================
 
 def fill_text(driver, text):
-    """Заполняет краткое содержание (textarea)."""
+    """Заполняет краткое содержание (textarea) через JS — атомарно,
+    без посимвольного send_keys.
+
+    Критично: в TextBody из пересланных писем бывают табуляции ('\t').
+    send_keys интерпретирует их как Tab → фокус улетает на следующее
+    поле формы, часть текста попадает в поле "Адресаты" / "Номер" /
+    и т.п. JS-присвоение el.value этого избегает.
+    """
     try:
         areas = driver.find_elements(By.TAG_NAME, "textarea")
         visible = [a for a in areas if a.is_displayed()]
-        if visible:
-            visible[0].click()
-            time.sleep(0.3)
-            visible[0].clear()
-            visible[0].send_keys(text)
-            log.info("Краткое содержание заполнено")
-        else:
+        if not visible:
             log.warning("Textarea не найдена")
+            time.sleep(0.5)
+            return
+        ta = visible[0]
+
+        # JS-ввод: атомарное присвоение value + события input/change,
+        # чтобы GWT-модель увидела новое значение
+        js_ok = False
+        try:
+            driver.execute_script("""
+                var el = arguments[0], value = arguments[1];
+                el.focus();
+                el.value = value;
+                el.dispatchEvent(new Event('input', {bubbles:true}));
+                el.dispatchEvent(new Event('change', {bubbles:true}));
+            """, ta, text)
+            actual = (ta.get_attribute('value') or '')
+            if actual.strip() == text.strip():
+                log.info(f"Краткое содержание: JS-ввод ({len(text)} символов)")
+                js_ok = True
+            else:
+                log.warning(f"JS-ввод не закрепился "
+                            f"(ожидал {len(text)}, получил {len(actual)}) → send_keys")
+        except Exception as e:
+            log.warning(f"JS-ввод textarea упал: {e} → send_keys")
+
+        if not js_ok:
+            # Fallback: замещаем табы пробелами, чтобы они не уводили фокус
+            safe_text = text.replace('\t', '    ')
+            ta.click()
+            time.sleep(0.3)
+            ta.clear()
+            ta.send_keys(safe_text)
+            log.info(f"Краткое содержание: send_keys fallback "
+                     f"(табы заменены на пробелы)")
     except Exception as e:
         log.error(f"Ошибка заполнения содержания: {e}")
     time.sleep(0.5)
