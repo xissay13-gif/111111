@@ -42,7 +42,7 @@ from ui import (click, wait_and_click, find_input_near_label,
                 wait_asud_loaded, wait_modal_closed, close_open_modals, js_set_value)
 from correspondent import (fill_correspondent_field, match_strict, fio_to_initials,
                            extract_fio_from_text)
-from attachments import find_msg_by_link, get_dummy_msg, attach_content
+from attachments import find_msg_by_link, get_dummy_msg, attach_content, move_to_done
 
 
 # ================= LOGGING =================
@@ -621,7 +621,8 @@ def create_one_document(driver, doc_data, index, total):
 
     # [6/7] Прикрепление
     outlook_dir = settings.get("outlook_dir", cfg.DEFAULTS["outlook_dir"])
-    attach_path = find_msg_by_link(doc_data.get("link"), outlook_dir, doc_data.get("файл"))
+    dummy_path = doc_data.get("файл")
+    attach_path = find_msg_by_link(doc_data.get("link"), outlook_dir, dummy_path)
     if attach_path:
         log.info(f"Прикрепляю: {os.path.basename(attach_path)}")
         attach_content(driver, attach_path)
@@ -632,10 +633,15 @@ def create_one_document(driver, doc_data, index, total):
     # [7/7] Регистрация (если ФИО найдено) или черновик
     if doc_data["корр_найден"]:
         register_and_resolve(driver, index, total)
+        # После успешной регистрации — реальный (не dummy) .msg → Завершено/
+        # Черновики НЕ переносим: файл нужен для ручной доработки.
+        if attach_path and attach_path != dummy_path:
+            move_to_done(attach_path, outlook_dir)
     else:
         log.warning(f"Row {doc_data['row_idx']}: ФИО НЕ найдено — "
                     f"оставляю в ЧЕРНОВИКАХ для ручной доработки "
-                    f"(тема: {doc_data['тема'][:60]})")
+                    f"(тема: {doc_data['тема'][:60]}). "
+                    f"Файл НЕ перемещаю — лежит на месте.")
 
     close_card_and_wait_main(driver)
 
