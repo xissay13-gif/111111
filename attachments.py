@@ -140,6 +140,40 @@ def get_dummy_msg(base_dir):
     return None
 
 
+def move_to_done(file_path, outlook_dir, done_dirname="Завершено"):
+    """Перемещает обработанный .msg в <outlook_dir>/Завершено/.
+    Папка создаётся если нет. Конфликт имён → суффикс _HHMMSS.
+    Ничего не делает если file_path пустой/не существует.
+    """
+    if not file_path or not os.path.isfile(file_path):
+        return
+    if not outlook_dir or not os.path.isdir(outlook_dir):
+        log.warning(f"outlook_dir '{outlook_dir}' не существует — "
+                    f"не перемещаю {os.path.basename(file_path)}")
+        return
+
+    done_dir = os.path.join(outlook_dir, done_dirname)
+    try:
+        os.makedirs(done_dir, exist_ok=True)
+    except Exception as e:
+        log.warning(f"Не удалось создать {done_dir}: {e}")
+        return
+
+    name = os.path.basename(file_path)
+    dest = os.path.join(done_dir, name)
+    if os.path.exists(dest):
+        base, ext = os.path.splitext(name)
+        ts = datetime.now().strftime("%H%M%S")
+        dest = os.path.join(done_dir, f"{base}_{ts}{ext}")
+
+    try:
+        import shutil
+        shutil.move(file_path, dest)
+        log.info(f"→ Завершено/{os.path.basename(dest)}")
+    except Exception as e:
+        log.warning(f"Не удалось переместить {name}: {e}")
+
+
 def attach_content(driver, file_path):
     """Прикрепляет файл. Сначала через input[type=file], затем pywinauto."""
     log.info(f"Прикрепление: {os.path.basename(file_path)}")

@@ -32,7 +32,7 @@ from ui import (click, wait_and_click, find_input_near_label,
                 wait_asud_loaded, wait_modal_closed, close_open_modals, js_set_value)
 from correspondent import (fill_correspondent_field, create_correspondent,
                            match_strict, fio_to_initials)
-from attachments import find_msg_by_link, get_dummy_msg, attach_content
+from attachments import find_msg_by_link, get_dummy_msg, attach_content, move_to_done
 
 
 # ================= LOGGING =================
@@ -407,11 +407,17 @@ def create_one_document(driver, doc_data, index, total):
 
     # [6/7] Прикрепление
     outlook_dir = settings.get("outlook_dir", cfg.DEFAULTS["outlook_dir"])
-    attach_path = find_msg_by_link(doc_data.get("link"), outlook_dir, doc_data.get("файл"))
+    dummy_path = doc_data.get("файл")
+    attach_path = find_msg_by_link(doc_data.get("link"), outlook_dir, dummy_path)
     if attach_path:
         log.info(f"Прикрепляю: {os.path.basename(attach_path)}")
         attach_content(driver, attach_path)
         wait_modal_closed(driver)
+        # Реальный (не dummy) файл → переносим в Завершено/
+        # В smart-routing все документы в черновиках по дизайну,
+        # поэтому критерий переноса — успешный attach (а не регистрация).
+        if attach_path != dummy_path:
+            move_to_done(attach_path, outlook_dir)
     else:
         log.info("Нет файла — пропускаю")
 
