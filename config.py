@@ -16,7 +16,7 @@ log = logging.getLogger("asud.config")
 DEFAULTS = {
     "asud_url": "https://asud.interrao.ru/asudik/",
     "timeout": 20,
-    "outlook_dir": r"D:\OutlookSubjects",
+    "outlook_dir": r"D:\OutlookSubjects\ОЭК",
     "addressee": "Басманов Александр Владимирович",
     "correspondent": "Неизвестный Неизвестный Неизвестный",
     "delivery_method": "Электронная почта",
