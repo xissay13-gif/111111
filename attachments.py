@@ -25,6 +25,19 @@ except ImportError:
     PYWINAUTO = False
 
 
+# Спецсимволы которые pywinauto.type_keys интерпретирует как клавиши-модификаторы
+# (а не как буквальный символ для печати).
+# +=Shift, ^=Ctrl, %=Alt, ~=Enter, (){}=группировки/escape
+_TYPE_KEYS_SPECIAL = set('+^%~(){}')
+
+
+def _escape_for_type_keys(text):
+    """Экранирует спецсимволы pywinauto.type_keys через '{X}'.
+    Без этого путь типа 'D:\\Работа+проекты\\Имя(копия).msg' будет
+    напечатан с зажатием Shift и т.п. — реальное имя поломается."""
+    return ''.join('{' + c + '}' if c in _TYPE_KEYS_SPECIAL else c for c in text)
+
+
 def _link_to_variants(link):
     """Генерирует все возможные имена файлов для link.
     Форматы: DD.MM.YYYY / YYYY-MM-DD, с/без ведущего нуля, суффиксы _1-_9."""
@@ -230,7 +243,8 @@ def attach_content(driver, file_path):
         dlg = app.top_window()
         dlg.set_focus()
         time.sleep(0.5)
-        dlg.type_keys(file_path, with_spaces=True, pause=0.02)
+        dlg.type_keys(_escape_for_type_keys(file_path),
+                      with_spaces=True, pause=0.02)
         time.sleep(0.5)
         dlg.type_keys("{ENTER}")
         time.sleep(2)
