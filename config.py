@@ -22,7 +22,7 @@ DEFAULTS = {
     # Если порт закрыт — автоматически fallback на обычный запуск.
     "debugger_port": 9222,
     # Вложения
-    "outlook_dir": r"D:\OutlookSubjects",  # mix: поиск .msg по Link
+    "outlook_dir": r"D:\OutlookSubjects\ТЭС",  # mix: поиск .msg по Link (ТЭС/ОЭК — выбирается на промпте)
     # Корреспонденты / адресаты
     "addressees": [
         "Басманов Александр Владимирович",
