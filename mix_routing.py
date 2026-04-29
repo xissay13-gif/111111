@@ -126,6 +126,77 @@ def save_state(xlsx_path, processed_set):
         log.warning(f"Не удалось сохранить state {path}: {e}")
 
 
+# ================= OUTPUT XLSX (для clean-resolutions) =================
+
+# Округ → ФИО начальника абонентского отдела
+OKRUG_TO_FIO = {
+    "САО": "Гренц Екатерина Александровна",
+    "ЦАО": "Емельянова Татьяна Николаевна",
+    "ОАО": "Рендюк Юлия Павловна",
+    "ЛАО": "Вырва Елена Анатольевна",
+    "КАО": "Кравец Татьяна Александровна",
+}
+
+
+def _output_xlsx_path(excel_path):
+    """<реестр>_резолюции.xlsx рядом с реестром."""
+    base, _ext = os.path.splitext(excel_path)
+    return base + "_резолюции.xlsx"
+
+
+def _ensure_output_xlsx(path):
+    """Создаёт output xlsx с шапкой если не существует."""
+    if os.path.isfile(path):
+        return
+    try:
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Резолюции"
+        ws.append(["ОПТС", "Округ", "ФИО", "Link"])
+        for c in range(1, 5):
+            ws.cell(row=1, column=c).font = openpyxl.styles.Font(bold=True)
+        widths = {1: 30, 2: 8, 3: 35, 4: 22}
+        for col, w in widths.items():
+            ws.column_dimensions[
+                openpyxl.utils.get_column_letter(col)].width = w
+        ws.freeze_panes = "A2"
+        wb.save(path)
+    except Exception as e:
+        log.warning(f"Не удалось создать {path}: {e}")
+
+
+def _append_output_row(path, doc_data, asud_id):
+    """Дописывает строку в output xlsx после успешной регистрации.
+    Колонки: ОПТС | Округ | ФИО | Link
+    """
+    # Округ — пытаемся определить автоматически из TextBody
+    okrug = None
+    try:
+        from okrug_parser import okrug_from_textbody
+        okrug = okrug_from_textbody(doc_data.get("содержание"),
+                                     base_dir_fn=cfg.get_base_dir)
+    except Exception as e:
+        log.warning(f"okrug_parser упал: {e}")
+    fio = OKRUG_TO_FIO.get(okrug) if okrug else None
+    link = doc_data.get("link")
+    link_str = ""
+    if link:
+        if isinstance(link, (datetime, date)):
+            link_str = link.strftime("%d.%m.%Y %H-%M-%S")
+        else:
+            link_str = str(link)
+    try:
+        wb = openpyxl.load_workbook(path)
+        ws = wb.active
+        ws.append([asud_id or "", okrug or "", fio or "", link_str])
+        wb.save(path)
+        wb.close()
+        log.info(f"  → {os.path.basename(path)}: "
+                 f"{asud_id or '—'} | {okrug or '—'} | {fio or '—'}")
+    except Exception as e:
+        log.warning(f"Не удалось записать в {path}: {e}")
+
+
 def load_excel(file_path):
     """Читает Лист2. Колонки: A=Link, B=Subject, C=TextBody, D=Тип (index).
 
@@ -412,17 +483,43 @@ def add_addressee(driver, person_name):
 
 # ================= REGISTRATION =================
 
+def capture_asud_id(driver, timeout=15):
+    """Читает регистрационный номер из шапки карточки (data-marker='ScreenHeader1').
+    Возвращает 'ОПТС/8/19892' (или похожее) либо None."""
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        try:
+            header = driver.find_element(By.CSS_SELECTOR,
+                "[data-marker='ScreenHeader1']")
+            bolds = header.find_elements(By.CSS_SELECTOR, "b")
+            if bolds:
+                txt = (bolds[0].text or "").strip()
+                # Должно быть похоже на ID документа: что-то/что-то/...
+                if txt and '/' in txt and len(txt) > 5 and not re.match(r'^\d{2}\.\d{2}\.\d{4}', txt):
+                    return txt
+        except Exception:
+            pass
+        time.sleep(0.3)
+    return None
+
+
 def register_and_resolve(driver, index, total):
-    """Регистрирует + На резолюцию + Да. Возвращает True при успехе."""
+    """Регистрирует + На резолюцию + Да. Возвращает asud_id (если захватили) или None."""
     log.info("Регистрирую...")
     registered = False
+    asud_id = None
     try:
         btn = WebDriverWait(driver, cfg.DEFAULTS["timeout"]).until(
             EC.presence_of_element_located((By.CSS_SELECTOR,
                 "#header-action-btn-register, [id*='header-action-btn-register']")))
         click(driver, btn, "Зарегистрировать")
         time.sleep(3)
-        log.info(f"Документ {index}/{total} ЗАРЕГИСТРИРОВАН")
+        # Захват номера документа после регистрации
+        asud_id = capture_asud_id(driver, timeout=10)
+        if asud_id:
+            log.info(f"Документ {index}/{total} ЗАРЕГИСТРИРОВАН: {asud_id}")
+        else:
+            log.warning(f"Документ {index}/{total} ЗАРЕГИСТРИРОВАН (номер не захватили)")
         registered = True
     except Exception:
         try:
@@ -434,7 +531,7 @@ def register_and_resolve(driver, index, total):
             log.error(f"'Зарегистрировать' не найдена: {e}")
 
     if not registered:
-        return False
+        return None
 
     # На резолюцию
     res_btn = None
@@ -459,7 +556,7 @@ def register_and_resolve(driver, index, total):
 
     if not res_btn:
         log.warning("'На резолюцию' не появилась")
-        return True
+        return asud_id
 
     click(driver, res_btn, "На резолюцию")
     time.sleep(2)
@@ -536,7 +633,7 @@ def register_and_resolve(driver, index, total):
         log.info(f"Документ {index}/{total} НА РЕЗОЛЮЦИИ")
     else:
         log.warning("Диалог 'Да' не появился за 10 сек")
-    return True
+    return asud_id
 
 
 def close_card_and_wait_main(driver):
@@ -631,8 +728,9 @@ def create_one_document(driver, doc_data, index, total):
         log.info("Нет файла — пропускаю")
 
     # [7/7] Регистрация (если ФИО найдено) или черновик
+    asud_id = None
     if doc_data["корр_найден"]:
-        register_and_resolve(driver, index, total)
+        asud_id = register_and_resolve(driver, index, total)
         # После успешной регистрации — реальный (не dummy) .msg → Завершено/
         # Черновики НЕ переносим: файл нужен для ручной доработки.
         if attach_path and attach_path != dummy_path:
@@ -644,6 +742,7 @@ def create_one_document(driver, doc_data, index, total):
                     f"Файл НЕ перемещаю — лежит на месте.")
 
     close_card_and_wait_main(driver)
+    return asud_id
 
 
 # ================= MAIN =================
@@ -774,15 +873,22 @@ def main():
         driver.get(url)
         wait_asud_loaded(driver)
 
+        # Output xlsx для clean-resolutions: ОПТС | Округ | ФИО | Link
+        output_path = _output_xlsx_path(excel_path)
+        _ensure_output_xlsx(output_path)
+        log.info(f"Output xlsx: {output_path}")
+
         done_count, err_count = 0, 0
         for i, doc in enumerate(docs, 1):
             try:
-                create_one_document(driver, doc, i, len(docs))
+                asud_id = create_one_document(driver, doc, i, len(docs))
                 # Помечаем как обработанный сразу после успеха (до следующей итерации)
                 key = _link_key(doc.get("link"))
                 if key:
                     processed.add(key)
                     save_state(excel_path, processed)
+                # Запись в output xlsx (даже если asud_id не захватили — ставим Link)
+                _append_output_row(output_path, doc, asud_id)
                 done_count += 1
             except Exception as e:
                 log.error(f"ОШИБКА документ {i}: {e}")
