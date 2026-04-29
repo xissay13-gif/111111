@@ -44,6 +44,8 @@ def _norm_text(s):
     s = str(s).lower().replace('ё', 'е')
     s = re.sub(r'[«»"\'`]', '', s)
     s = re.sub(r'[.,;:()\\/]+', ' ', s)
+    # "3-я молодежная" / "3я молодежная" → "3 молодежная"
+    s = re.sub(r'(\d+)[\s-]*я(?=\s)', r'\1', s)
     return re.sub(r'\s+', ' ', s).strip()
 
 
@@ -110,7 +112,17 @@ def _build_index(base_dir_fn=None):
                 h = row[cols['house']].strip().lower()
                 o = row[cols['okrug']].strip()
                 if s and h and o:
+                    # Базовый ключ
                     idx[s].add((h, o))
+                    # Алиасы для номерных улиц:
+                    # 'молодежная 3-я' → также 'молодежная 3', '3-я молодежная',
+                    # '3 молодежная'
+                    m = re.match(r'^(.+?)\s+(\d+)[\s-]*я$', s)
+                    if m:
+                        base, num = m.group(1).strip(), m.group(2)
+                        idx[f"{base} {num}"].add((h, o))
+                        idx[f"{num}-я {base}"].add((h, o))
+                        idx[f"{num} {base}"].add((h, o))
         _index = idx
         _streets_sorted = sorted(idx.keys(), key=lambda x: -len(x))
         log.info(f"Street index: {len(idx)} улиц")
@@ -165,7 +177,15 @@ def okrug_from_textbody(textbody, base_dir_fn=None):
     for name, frag in fragments:
         street, house = _find_street_house(frag, idx, sorted_streets)
         if street and house:
+            # Нормализация дома для сравнения: '15г' → '15', '6в' → '6'.
+            # Литерные суффиксы (а/б/в/г) обозначают разные строения одного
+            # дома — обычно в одном округе, можно игнорировать.
+            house_digits = re.match(r'\d+', house)
+            house_num = house_digits.group(0) if house_digits else house
             for h, o in idx[street]:
-                if h == house:
+                # В БД тоже могут быть дома с буквами — нормализуем обе стороны
+                h_digits = re.match(r'\d+', h)
+                h_num = h_digits.group(0) if h_digits else h
+                if h == house or h_num == house_num:
                     return o
     return None
