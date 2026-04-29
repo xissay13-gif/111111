@@ -89,12 +89,14 @@ _HOUSE_RE = re.compile(r'(\d+[а-я]?)(?:[/\\-](\d+[а-я]?))?', re.IGNORECASE)
 
 
 def _norm_text_for_match(s):
-    """Нормализация для сопоставления: lower, ё→е, без пунктуации, single space."""
+    """Нормализация для сопоставления: lower, ё→е, без пунктуации, single space.
+    Также '3-я Молодежная' → '3 Молодежная'."""
     if not s:
         return ''
     s = str(s).lower().replace('ё', 'е')
     s = re.sub(r'[«»"\'`]', '', s)
     s = re.sub(r'[.,;:()\\/]+', ' ', s)
+    s = re.sub(r'(\d+)[\s-]*я(?=\s)', r'\1', s)
     s = re.sub(r'\s+', ' ', s).strip()
     return s
 
@@ -152,6 +154,14 @@ def _build_street_index():
                     okrug = row[cols['okrug']].strip()
                     if street and house and okrug:
                         idx[street].add((house, okrug))
+                        # Алиасы: 'молодежная 3-я' → '3-я молодежная',
+                        # '3 молодежная', 'молодежная 3'
+                        m = re.match(r'^(.+?)\s+(\d+)[\s-]*я$', street)
+                        if m:
+                            base, num = m.group(1).strip(), m.group(2)
+                            idx[f"{base} {num}"].add((house, okrug))
+                            idx[f"{num}-я {base}"].add((house, okrug))
+                            idx[f"{num} {base}"].add((house, okrug))
         log.info(f"Street index: {len(idx)} улиц")
         _STREET_INDEX = idx
         _ALL_STREETS_SORTED = sorted(idx.keys(), key=lambda s: -len(s))
@@ -215,8 +225,13 @@ def _okrug_from_textbody(textbody):
     for name, frag in fragments:
         street, house = _find_street_house(frag, idx, sorted_streets)
         if street and house:
+            # '15г' → '15' для сравнения (литерные суффиксы — те же дома)
+            house_digits = re.match(r'\d+', house)
+            house_num = house_digits.group(0) if house_digits else house
             for h, o in idx[street]:
-                if h == house:
+                h_digits = re.match(r'\d+', h)
+                h_num = h_digits.group(0) if h_digits else h
+                if h == house or h_num == house_num:
                     log.info(f"  адрес [{name}]: {street} {house} → {o}")
                     return o
     return None
