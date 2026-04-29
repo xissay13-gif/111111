@@ -23,6 +23,7 @@ jobs:
     - name: Build EXE
       run: >
         pyinstaller --onefile --name asud_resolutions
+        --add-data "addresses.csv;."
         --hidden-import=selenium.webdriver.edge.webdriver
         --hidden-import=selenium.webdriver.edge.service
         --hidden-import=selenium.webdriver.edge.options

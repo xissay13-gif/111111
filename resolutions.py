@@ -53,21 +53,200 @@ settings = {}
 APPEAL_RE = re.compile(r'обращени[ея]\s*№?\s*(\d{4,10})', re.IGNORECASE)
 
 
-def _extract_appeal_no(textbody):
-    """Извлекает 'обращение № NNNNNN' из TextBody. Возвращает строку или None."""
+# Lookup street_name → set of (house, okrug_short) — индекс для матчинга
+# адресов из TextBody с адресной БД. Загружается лениво.
+_STREET_INDEX = None
+_ALL_STREETS_SORTED = None  # отсортированы по длине (длинные первыми)
+
+
+def _addresses_csv_path():
+    """Возвращает путь к addresses.csv: внутри exe (через _MEIPASS)
+    или рядом с .py-скриптом в dev-режиме."""
+    # PyInstaller --onefile распаковывает данные в sys._MEIPASS
+    meipass = getattr(sys, '_MEIPASS', None)
+    if meipass:
+        path = os.path.join(meipass, 'addresses.csv')
+        if os.path.exists(path):
+            return path
+    # Fallback: рядом с exe / скриптом
+    base = cfg.get_base_dir()
+    path = os.path.join(base, 'addresses.csv')
+    if os.path.exists(path):
+        return path
+    return None
+
+
+# --- Нормализация для парсинга адресов ---
+
+_PREFIX_RE = re.compile(
+    r'^(?:г\s*омск\s*,?\s*)?'
+    r'(?:улица|ул\.?|проспект|пр[-]?т\.?|пр[-]?кт\.?|пр\.?|переулок|пер\.?|'
+    r'бульвар|б[-]?р\.?|площадь|пл\.?|шоссе|ш\.?|набережная|наб\.?|'
+    r'линия|тупик|проезд|пр[-]?д\.?|микрорайон|мкр\.?)\s*',
+    re.IGNORECASE)
+
+_HOUSE_RE = re.compile(r'(\d+[а-я]?)(?:[/\\-](\d+[а-я]?))?', re.IGNORECASE)
+
+
+def _norm_text_for_match(s):
+    """Нормализация для сопоставления: lower, ё→е, без пунктуации, single space."""
+    if not s:
+        return ''
+    s = str(s).lower().replace('ё', 'е')
+    s = re.sub(r'[«»"\'`]', '', s)
+    s = re.sub(r'[.,;:()\\/]+', ' ', s)
+    s = re.sub(r'\s+', ' ', s).strip()
+    return s
+
+
+def _norm_street_name(s):
+    """Только название улицы без префиксов."""
+    return _PREFIX_RE.sub('', _norm_text_for_match(s)).strip()
+
+
+def _norm_house_main(s):
+    """Возвращает основной номер дома (первое число)."""
+    if not s: return ''
+    m = _HOUSE_RE.search(str(s).lower().replace('ё', 'е'))
+    return m.group(1) if m else ''
+
+
+def _build_street_index():
+    """Парсит addresses.csv в индекс {street_norm: set((house, okrug_short))}.
+    Используется один раз (кешируется в _STREET_INDEX)."""
+    global _STREET_INDEX, _ALL_STREETS_SORTED
+    if _STREET_INDEX is not None:
+        return _STREET_INDEX, _ALL_STREETS_SORTED
+    path = _addresses_csv_path()
+    if not path:
+        log.warning("addresses.csv не найден — авто-определение округа отключено")
+        _STREET_INDEX = {}
+        _ALL_STREETS_SORTED = []
+        return _STREET_INDEX, _ALL_STREETS_SORTED
+
+    # CSV: LS;okrug
+    # Старая версия CSV содержит только LS+okrug, но для адрес-парсинга
+    # нужны улицы из исходного xlsx. Если у нас только CSV без улиц —
+    # парсер не сработает; идём через колонку ao реестра.
+    # В будущем addresses.csv можно расширить колонкой улицы.
+    try:
+        import csv
+        from collections import defaultdict
+        idx = defaultdict(set)
+        with open(path, encoding='utf-8') as f:
+            reader = csv.reader(f, delimiter=';')
+            header = next(reader, None)
+            # Пытаемся определить колонки
+            if not header or 'okrug' not in [h.lower() for h in header]:
+                _STREET_INDEX = {}
+                _ALL_STREETS_SORTED = []
+                return _STREET_INDEX, _ALL_STREETS_SORTED
+            # Если в CSV есть street/house — используем
+            cols = {h.lower(): i for i, h in enumerate(header)}
+            if 'street' in cols and 'house' in cols:
+                for row in reader:
+                    if not row or len(row) <= max(cols['street'], cols['house'], cols['okrug']):
+                        continue
+                    street = _norm_street_name(row[cols['street']])
+                    house = _norm_house_main(row[cols['house']])
+                    okrug = row[cols['okrug']].strip()
+                    if street and house and okrug:
+                        idx[street].add((house, okrug))
+        log.info(f"Street index: {len(idx)} улиц")
+        _STREET_INDEX = idx
+        _ALL_STREETS_SORTED = sorted(idx.keys(), key=lambda s: -len(s))
+    except Exception as e:
+        log.warning(f"Ошибка построения street index: {e}")
+        _STREET_INDEX = {}
+        _ALL_STREETS_SORTED = []
+    return _STREET_INDEX, _ALL_STREETS_SORTED
+
+
+def _find_street_house(text, idx, sorted_streets):
+    """Ищет известную улицу в нормализованном тексте, потом дом рядом."""
+    norm = _norm_text_for_match(text)
+    for street in sorted_streets:
+        if len(street) < 3:
+            continue
+        # Поиск как целое слово
+        pos = 0
+        while True:
+            i = norm.find(street, pos)
+            if i < 0: break
+            left_ok = i == 0 or not norm[i-1].isalnum()
+            end = i + len(street)
+            right_ok = end == len(norm) or not norm[end].isalnum()
+            if left_ok and right_ok:
+                # Дом в окне 50 символов после улицы
+                tail = norm[end:end+50]
+                m = re.search(r'\b(\d+[а-я]?)', tail)
+                if m:
+                    return (street, m.group(1))
+            pos = i + 1
+    return (None, None)
+
+
+def _okrug_from_textbody(textbody):
+    """Извлекает округ из TextBody.
+
+    Стратегия: суть обращения → почтовый адрес → весь текст.
+    Возвращает короткий код округа ('КАО', 'ЦАО', ...) или None.
+    """
     if not textbody:
         return None
-    m = APPEAL_RE.search(str(textbody))
-    return m.group(1) if m else None
+    idx, sorted_streets = _build_street_index()
+    if not idx:
+        return None
+    text = str(textbody)
+    fragments = []
+    # 1) Суть обращения
+    m = re.search(r'суть\s+обращени[яе]\s*:?\s*([\s\S]+?)(?:\n\s*\n|$)',
+                  text, re.IGNORECASE)
+    if m:
+        fragments.append(('суть', m.group(1)))
+    # 2) Почтовый адрес
+    m = re.search(r'почтов[а-я]+\s+адрес[а-я]*\s*:\s*([^\n]+)',
+                  text, re.IGNORECASE)
+    if m:
+        fragments.append(('почт', m.group(1)))
+    # 3) Весь текст как fallback
+    fragments.append(('весь', text))
+
+    for name, frag in fragments:
+        street, house = _find_street_house(frag, idx, sorted_streets)
+        if street and house:
+            for h, o in idx[street]:
+                if h == house:
+                    log.info(f"  адрес [{name}]: {street} {house} → {o}")
+                    return o
+    return None
 
 
-def _resolve_executor(ao, fio):
-    """Возвращает ФИО начальника. Сначала из колонки fio, иначе через мапу по ao."""
+def _resolve_executor(ao, fio, ls=None, textbody=None):
+    """Возвращает ФИО начальника по приоритету:
+    1. fio из реестра (если заполнено)
+    2. ao из реестра → DEFAULT_OKRUG_MAP
+    3. адрес из TextBody → addresses.csv → DEFAULT_OKRUG_MAP
+
+    Параметр ls пока не используется — формат LS в реестре не совпадает
+    с адресной БД (11 цифр vs 6), нужно правило конвертации.
+    """
+    # 1. fio напрямую (вручную проставленный)
     if fio and str(fio).strip():
         return str(fio).strip()
+    # 2. ao из реестра (вручную проставленный)
     if ao:
         key = str(ao).strip()
-        return cfg.DEFAULT_OKRUG_MAP.get(key)
+        v = cfg.DEFAULT_OKRUG_MAP.get(key)
+        if v:
+            return v
+    # 3. Парсинг адреса из TextBody
+    if textbody:
+        ao_short = _okrug_from_textbody(textbody)
+        if ao_short:
+            v = cfg.DEFAULT_OKRUG_MAP.get(ao_short)
+            if v:
+                return v
     return None
 
 
@@ -93,6 +272,7 @@ def load_excel(file_path):
         # row[3] = Тема (тип, не нужно для резолюций)
         # row[4] = To
         # row[5] = LS
+        ls = row[5] if len(row) > 5 else None
         ao = row[6] if len(row) > 6 else None
         fio = row[7] if len(row) > 7 else None
 
@@ -100,7 +280,7 @@ def load_excel(file_path):
             skipped += 1
             continue
 
-        executor = _resolve_executor(ao, fio)
+        executor = _resolve_executor(ao, fio, ls, textbody)
         appeal_no = _extract_appeal_no(textbody)
 
         rows.append({
@@ -108,6 +288,7 @@ def load_excel(file_path):
             "link": link,
             "subject": str(subject or '').strip(),
             "textbody": str(textbody),
+            "ls": _norm_ls(ls),
             "ao": str(ao or '').strip(),
             "executor": executor,
             "appeal_no": appeal_no,
