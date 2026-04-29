@@ -409,7 +409,7 @@ def switch_account(driver, target_substring):
     click(driver, target, f"учётка {target_substring}")
     time.sleep(3)
     log.info("Переключение запущено, жду перезагрузку АСУД")
-    wait_asud_loaded(driver)
+    _wait_profile_loaded(driver)
     return True
 
 
@@ -890,6 +890,26 @@ def _start_browser(base_dir):
     return webdriver.Edge(service=service, options=options), False
 
 
+def _wait_profile_loaded(driver, max_wait=120):
+    """Ждёт готовности АСУД для resolutions: только readyState + кнопка
+    'Создать документ' (как индикатор что главная отрисована).
+    Таблицу с задачами НЕ ждём — у Есиной inbox может быть пустым."""
+    log.info("Жду готовности АСУД...")
+    try:
+        WebDriverWait(driver, max_wait).until(
+            lambda d: d.execute_script("return document.readyState === 'complete'"))
+    except Exception:
+        log.warning("readyState не complete")
+
+    try:
+        WebDriverWait(driver, max_wait).until(
+            EC.element_to_be_clickable((By.ID, "mainscreen-create-button")))
+        log.info("АСУД готов")
+    except Exception:
+        log.warning("Кнопка 'Создать документ' не появилась — продолжаю")
+    time.sleep(1)
+
+
 def _go_to_asud(driver, url, attached):
     try:
         cur = (driver.current_url or "").lower()
@@ -900,7 +920,7 @@ def _go_to_asud(driver, url, attached):
     else:
         log.info(f"Открываю {url}")
         driver.get(url)
-    wait_asud_loaded(driver)
+    _wait_profile_loaded(driver)
 
 
 def _maybe_quit(driver, attached):
@@ -976,7 +996,7 @@ def main():
                 # Возврат в список — обновим страницу
                 try:
                     driver.get(url)
-                    wait_asud_loaded(driver)
+                    _wait_profile_loaded(driver)
                     switch_account(driver,
                         settings.get("target_account", cfg.DEFAULTS["target_account"]))
                     click_sidebar_section(driver,
