@@ -23,6 +23,7 @@ jobs:
     - name: Build EXE
       run: >
         pyinstaller --onefile --name auto_create_correspondent
+        --add-data "addresses.csv;."
         --hidden-import=selenium.webdriver.edge.webdriver
         --hidden-import=selenium.webdriver.edge.service
         --hidden-import=selenium.webdriver.edge.options
@@ -32,6 +33,7 @@ jobs:
         --hidden-import=openpyxl
         --hidden-import=pyautogui
         --hidden-import=pywinauto
+        --hidden-import=okrug_parser
         auto_create_correspondent.py
 
     - name: Upload EXE
