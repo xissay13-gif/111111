@@ -514,7 +514,12 @@ def click_sidebar_section(driver, section_text):
 # UI: поиск и открытие документа в списке "На резолюцию"
 # ============================================================
 
-LIST_TABLE_ID = "CABINET_MENU__RECEIVED__ALL_ACTIVE__TO_RESOLUTION"
+# GXT-сетка АСУД: <tr> с обоими классами obj-list-rec и obj-list-task —
+# это строки данных. Заголовки/служебные tr этих классов не имеют.
+# Раньше использовался id "CABINET_MENU__RECEIVED__ALL_ACTIVE__TO_RESOLUTION",
+# но это id сайдбар-пункта, а не таблицы → находили tr меню вместо данных.
+DATA_ROW_XPATH = ("//tr[contains(concat(' ',normalize-space(@class),' '),' obj-list-rec ')"
+                  " and contains(concat(' ',normalize-space(@class),' '),' obj-list-task ')]")
 
 # Фильтр-input под колонкой "Номер" — стабильный id из DOM
 NUMBER_FILTER_INPUT_ID = "FCPC_Номер-input"
@@ -590,12 +595,11 @@ def find_doc_row(driver, doc, timeout=8):
             while time.monotonic() < end:
                 tick += 1
                 try:
-                    rows = driver.find_elements(By.XPATH,
-                        f"//table[@id='{LIST_TABLE_ID}']//tbody/tr")
+                    rows = driver.find_elements(By.XPATH, DATA_ROW_XPATH)
                     visible_rows = [r for r in rows if r.is_displayed()
                                     and (r.text or '').strip()]
-                    log.debug(f"  tick#{tick}: всего <tr>={len(rows)}, "
-                             f"видимых-с-текстом={len(visible_rows)}")
+                    log.debug(f"  tick#{tick}: всего obj-list-rec.obj-list-task <tr>="
+                             f"{len(rows)}, видимых-с-текстом={len(visible_rows)}")
                     if visible_rows:
                         first_text = (visible_rows[0].text or '').replace('\n', ' ')[:80]
                         log.info(f"[find] МАТЧ по фильтру: {asud_id} → {len(visible_rows)} строк")
@@ -618,8 +622,7 @@ def find_doc_row(driver, doc, timeout=8):
         if doc.get('appeal_no'):
             try:
                 row = driver.find_element(By.XPATH,
-                    f"//table[@id='{LIST_TABLE_ID}']"
-                    f"//tr[contains(., '{doc['appeal_no']}')]")
+                    f"{DATA_ROW_XPATH}[contains(., '{doc['appeal_no']}')]")
                 if row.is_displayed():
                     log.info(f"[find] МАТЧ (fallback): appeal № {doc['appeal_no']}")
                     return row
@@ -630,8 +633,7 @@ def find_doc_row(driver, doc, timeout=8):
         if len(snippet) >= 20:
             try:
                 row = driver.find_element(By.XPATH,
-                    f"//table[@id='{LIST_TABLE_ID}']"
-                    f"//tr[contains(., \"{snippet}\")]")
+                    f"{DATA_ROW_XPATH}[contains(., \"{snippet}\")]")
                 if row.is_displayed():
                     log.info(f"[find] МАТЧ (fallback): TextBody {snippet!r}")
                     return row
@@ -660,19 +662,19 @@ def _refresh_first_row(driver):
     stale — пересортировка перерисовывает грид.
     """
     try:
-        rows = driver.find_elements(By.XPATH,
-            f"//table[@id='{LIST_TABLE_ID}']//tbody/tr")
-        log.debug(f"_refresh_first_row: всего <tr>={len(rows)}")
+        rows = driver.find_elements(By.XPATH, DATA_ROW_XPATH)
+        log.debug(f"_refresh_first_row: data <tr>={len(rows)}")
         for idx, r in enumerate(rows):
             try:
                 if r.is_displayed() and (r.text or '').strip():
-                    log.debug(f"  → свежий ref на <tr>[{idx}]")
+                    cls_preview = (r.get_attribute('class') or '')[:80]
+                    log.debug(f"  → свежий ref на data-<tr>[{idx}], class={cls_preview!r}")
                     return r
             except Exception:
                 continue
-        log.debug(f"  → ни одной видимой <tr> с текстом")
+        log.debug(f"  → ни одной видимой data-<tr> с текстом")
     except Exception as e:
-        log.debug(f"  ошибка поиска <tr>: {e}")
+        log.debug(f"  ошибка поиска data-<tr>: {e}")
     return None
 
 
