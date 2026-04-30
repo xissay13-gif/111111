@@ -530,22 +530,76 @@ def add_addressee(driver, person_name):
 
 # ================= REGISTRATION =================
 
+_ASUD_ID_RE = re.compile(
+    r'\b([А-Я]{2,5}/[А-Я0-9-]+(?:/[А-Я0-9-]+)+(?:/\d+))\b',
+    re.UNICODE)
+
+
+def _looks_like_asud_id(txt):
+    if not txt:
+        return False
+    txt = txt.strip()
+    if '/' not in txt or len(txt) < 6:
+        return False
+    if re.match(r'^\d{2}\.\d{2}\.\d{4}', txt):
+        return False
+    return True
+
+
 def capture_asud_id(driver, timeout=15):
-    """Читает №ОПТС/... из шапки карточки ([data-marker='ScreenHeader1']/<b>)."""
+    """Читает регистрационный номер документа после регистрации.
+    3 стратегии (ScreenHeader1 → первый <b>; ScreenHeader1 → все <b>
+    с фильтром; regex по всему тексту страницы) + verbose-лог."""
     end = time.monotonic() + timeout
+    last_dump = 0
     while time.monotonic() < end:
+        # Стратегия 1
         try:
             header = driver.find_element(By.CSS_SELECTOR,
                 "[data-marker='ScreenHeader1']")
             bolds = header.find_elements(By.CSS_SELECTOR, "b")
-            if bolds:
-                txt = (bolds[0].text or "").strip()
-                if (txt and '/' in txt and len(txt) > 5
-                        and not re.match(r'^\d{2}\.\d{2}\.\d{4}', txt)):
+            for b in bolds:
+                try:
+                    txt = (b.text or "").strip()
+                    if _looks_like_asud_id(txt):
+                        log.info(f"  asud_id [s1]: {txt!r}")
+                        return txt
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        # Стратегия 2
+        try:
+            for b in driver.find_elements(By.XPATH,
+                    "//*[@data-marker='ScreenHeader1']//b"):
+                txt = (b.text or "").strip()
+                if _looks_like_asud_id(txt):
+                    log.info(f"  asud_id [s2]: {txt!r}")
                     return txt
         except Exception:
             pass
+        if time.monotonic() - last_dump > 3:
+            last_dump = time.monotonic()
+            try:
+                headers = driver.find_elements(By.CSS_SELECTOR,
+                    "[data-marker='ScreenHeader1']")
+                log.info(f"  ждём asud_id... ScreenHeader1: {len(headers)}")
+                if headers:
+                    inner = (headers[0].text or "")[:200].replace('\n', ' | ')
+                    log.info(f"    содержимое: {inner!r}")
+            except Exception:
+                pass
         time.sleep(0.3)
+    # Стратегия 3
+    try:
+        body_text = driver.find_element(By.TAG_NAME, "body").text
+        m = _ASUD_ID_RE.search(body_text)
+        if m:
+            log.info(f"  asud_id [s3 regex]: {m.group(1)!r}")
+            return m.group(1)
+    except Exception:
+        pass
+    log.warning("Регистрационный номер не захватили — пуст в output")
     return None
 
 
