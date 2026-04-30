@@ -19,7 +19,8 @@ from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
-from ui import click, find_input_near_label, close_open_modals, js_type_combobox
+from ui import (click, find_input_near_label, close_open_modals,
+                js_type_combobox, find_dropdown_options)
 
 log = logging.getLogger("asud.correspondent")
 
@@ -478,35 +479,18 @@ def fill_correspondent_field(driver, person_name):
     js_type_combobox(driver, inp, surname)
     log.info(f"Введена фамилия (JS): {surname}")
 
-    def find_all():
-        from selenium.webdriver.common.by import By as _By
-        results = driver.find_elements(_By.XPATH, f"//*[contains(text(),'{surname}')]")
-        out = []
-        for r in results:
-            try:
-                if not r.is_displayed() or r == inp or r.tag_name.lower() == 'input':
-                    continue
-                # Фильтр длины: варианты выпадашки всегда короткие,
-                # длинные элементы — это заголовки/тело страницы.
-                txt = r.text or ""
-                if len(txt) > 150:
-                    continue
-                out.append(r)
-            except Exception:
-                continue
-        return out
-
-    # Ждём появления вариантов в выпадашке вместо sleep(2)
     all_results = []
     try:
-        WebDriverWait(driver, 5).until(lambda d: len(find_all()) > 0)
-        all_results = find_all()
+        WebDriverWait(driver, 5).until(
+            lambda d: len(find_dropdown_options(d, surname, inp)) > 0)
+        all_results = find_dropdown_options(driver, surname, inp)
     except Exception:
         from selenium.webdriver.common.keys import Keys as _Keys
         try:
             inp.send_keys(_Keys.ENTER)
-            WebDriverWait(driver, 3).until(lambda d: len(find_all()) > 0)
-            all_results = find_all()
+            WebDriverWait(driver, 3).until(
+                lambda d: len(find_dropdown_options(d, surname, inp)) > 0)
+            all_results = find_dropdown_options(driver, surname, inp)
         except Exception:
             pass
 

@@ -40,7 +40,7 @@ from selenium.webdriver.support import expected_conditions as EC
 import config as cfg
 from ui import (click, wait_and_click, find_input_near_label,
                 wait_asud_loaded, wait_modal_closed, close_open_modals,
-                js_set_value, js_type_combobox)
+                js_set_value, js_type_combobox, find_dropdown_options)
 from correspondent import (fill_correspondent_field, match_strict, fio_to_initials,
                            extract_fio_from_text)
 from attachments import find_msg_by_link, get_dummy_msg, attach_content, move_to_done
@@ -428,22 +428,17 @@ def add_addressee(driver, person_name):
 
     from correspondent import match_correspondent
 
-    # Ждём появления вариантов в выпадашке вместо фиксированного sleep(2)
-    def _surname_options():
-        results = driver.find_elements(By.XPATH, f"//*[contains(text(),'{surname}')]")
-        return [r for r in results
-                if r.is_displayed() and r != inp and r.tag_name.lower() != 'input']
-
     all_results = []
     try:
-        WebDriverWait(driver, 5).until(lambda d: len(_surname_options()) > 0)
-        all_results = _surname_options()
+        WebDriverWait(driver, 5).until(
+            lambda d: len(find_dropdown_options(d, surname, inp)) > 0)
+        all_results = find_dropdown_options(driver, surname, inp)
     except Exception:
-        # Дропнуть Enter и ещё подождать — fallback
         try:
             inp.send_keys(Keys.ENTER)
-            WebDriverWait(driver, 3).until(lambda d: len(_surname_options()) > 0)
-            all_results = _surname_options()
+            WebDriverWait(driver, 3).until(
+                lambda d: len(find_dropdown_options(d, surname, inp)) > 0)
+            all_results = find_dropdown_options(driver, surname, inp)
         except Exception:
             pass
 

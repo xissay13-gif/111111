@@ -81,27 +81,32 @@ def wait_and_click(driver, by, selector, description="", timeout=20):
     return el
 
 
+_FIND_INPUT_JS = """
+const labelText = arguments[0];
+const xp = `//*[normalize-space(text())='${labelText}']`;
+const snap = document.evaluate(xp, document, null,
+    XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
+for (let i = 0; i < snap.snapshotLength; i++) {
+    const label = snap.snapshotItem(i);
+    if (!label.offsetParent) continue;
+    let parent = label;
+    for (let level = 1; level <= 5; level++) {
+        parent = parent.parentElement;
+        if (!parent) break;
+        const inputs = parent.querySelectorAll(
+            "input[id*='select_combobox-input'], input[type='text']");
+        for (const inp of inputs) {
+            if (inp.offsetParent && !inp.readOnly) return inp;
+        }
+    }
+}
+return null;
+"""
+
+
 def find_input_near_label(driver, label_text):
-    """Находит input combobox рядом с лейблом (точное совпадение)."""
-    labels = driver.find_elements(By.XPATH,
-        f"//*[normalize-space(text())='{label_text}']")
-    for label in labels:
-        try:
-            if not label.is_displayed():
-                continue
-            for level in range(1, 6):
-                parent = label
-                for _ in range(level):
-                    parent = parent.find_element(By.XPATH, "..")
-                inputs = parent.find_elements(By.CSS_SELECTOR,
-                    "input[id*='select_combobox-input'], input[type='text']")
-                visible = [i for i in inputs
-                           if i.is_displayed() and i.get_attribute("readonly") is None]
-                if visible:
-                    return visible[0]
-        except Exception:
-            continue
-    return None
+    """Находит input combobox рядом с лейблом — один JS-вызов вместо ~25 Selenium round-trips."""
+    return driver.execute_script(_FIND_INPUT_JS, label_text)
 
 
 def wait_asud_loaded(driver, max_wait=120):
@@ -172,6 +177,30 @@ def js_set_value(driver, element, value):
         arguments[0].dispatchEvent(new Event('input', {bubbles:true}));
         arguments[0].dispatchEvent(new Event('change', {bubbles:true}));
     """, element, value)
+
+
+_FIND_OPTIONS_JS = """
+const text = arguments[0], inp = arguments[1];
+const xp = `//*[contains(text(),"${text}")]`;
+const snap = document.evaluate(xp, document, null,
+    XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
+const out = [];
+for (let i = 0; i < snap.snapshotLength; i++) {
+    const r = snap.snapshotItem(i);
+    if (!r.offsetParent) continue;
+    if (r === inp) continue;
+    if (r.tagName === 'INPUT') continue;
+    if ((r.textContent || '').length > 150) continue;
+    out.push(r);
+}
+return out;
+"""
+
+
+def find_dropdown_options(driver, text, anchor_input):
+    """Возвращает видимые варианты выпадашки, где text встречается в textContent.
+    Один JS-вызов вместо N+1 Selenium round-trips."""
+    return driver.execute_script(_FIND_OPTIONS_JS, text, anchor_input)
 
 
 def js_type_combobox(driver, element, value):
