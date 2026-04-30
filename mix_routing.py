@@ -39,7 +39,8 @@ from selenium.webdriver.support import expected_conditions as EC
 
 import config as cfg
 from ui import (click, wait_and_click, find_input_near_label,
-                wait_asud_loaded, wait_modal_closed, close_open_modals, js_set_value)
+                wait_asud_loaded, wait_modal_closed, close_open_modals,
+                js_set_value, js_type_combobox)
 from correspondent import (fill_correspondent_field, match_strict, fio_to_initials,
                            extract_fio_from_text)
 from attachments import find_msg_by_link, get_dummy_msg, attach_content, move_to_done
@@ -276,21 +277,17 @@ def load_excel(file_path):
 # ================= FORM FILLING =================
 
 def fill_text(driver, text):
-    """Заполняет краткое содержание (textarea)."""
+    """Заполняет краткое содержание (textarea) — JS-set, plain-поле."""
     try:
         areas = driver.find_elements(By.TAG_NAME, "textarea")
         visible = [a for a in areas if a.is_displayed()]
         if visible:
-            visible[0].click()
-            time.sleep(0.3)
-            visible[0].clear()
-            visible[0].send_keys(text)
-            log.info("Краткое содержание заполнено")
+            js_set_value(driver, visible[0], text)
+            log.info("Краткое содержание заполнено (JS)")
         else:
             log.warning("Textarea не найдена")
     except Exception as e:
         log.error(f"Ошибка заполнения содержания: {e}")
-    time.sleep(0.5)
 
 
 def fill_corr_number(driver, link=None):
@@ -309,17 +306,10 @@ def fill_corr_number(driver, link=None):
         return
     try:
         driver.execute_script("arguments[0].scrollIntoView({block:'center'});", inp)
-        time.sleep(0.3)
-        inp.click()
-        time.sleep(0.3)
-        inp.clear()
-        time.sleep(0.2)
-        inp.send_keys(value)
-        inp.send_keys(Keys.TAB)
-        log.info(f"Номер: {value}")
-    except Exception:
         js_set_value(driver, inp, value)
         log.info(f"Номер (JS): {value}")
+    except Exception as e:
+        log.warning(f"Номер: ошибка {e}")
 
 
 def fill_corr_date(driver):
@@ -352,18 +342,10 @@ def fill_corr_date(driver):
         return
     try:
         driver.execute_script("arguments[0].scrollIntoView({block:'center'});", inp)
-        driver.execute_script("arguments[0].focus(); arguments[0].click();", inp)
-        time.sleep(0.3)
-        inp.send_keys(Keys.CONTROL + "a")
-        time.sleep(0.2)
-        inp.send_keys(Keys.DELETE)
-        time.sleep(0.2)
-        inp.send_keys(today)
-        inp.send_keys(Keys.TAB)
-        log.info(f"Дата: {today}")
-    except Exception:
         js_set_value(driver, inp, today)
         log.info(f"Дата (JS): {today}")
+    except Exception as e:
+        log.warning(f"Дата: ошибка {e}")
 
 
 def fill_delivery_method(driver):
@@ -440,10 +422,9 @@ def add_addressee(driver, person_name):
 
     surname = person_name.split()[0]
     inp.click()
-    inp.clear()
-    for char in surname:
-        inp.send_keys(char)
-        time.sleep(0.05)
+    # Combobox-autocomplete — JS-set + dispatch input/keyup, чтобы GXT
+    # перерисовал выпадашку без посимвольного ввода.
+    js_type_combobox(driver, inp, surname)
 
     from correspondent import match_correspondent
 

@@ -164,10 +164,37 @@ def close_open_modals(driver, max_escapes=5):
 
 
 def js_set_value(driver, element, value):
-    """Устанавливает значение input через JS + dispatch events."""
+    """Устанавливает значение input через JS + dispatch events.
+    Подходит для plain-полей (textarea, дата, номер) — без autocomplete."""
     driver.execute_script("""
         arguments[0].focus();
         arguments[0].value = arguments[1];
         arguments[0].dispatchEvent(new Event('input', {bubbles:true}));
         arguments[0].dispatchEvent(new Event('change', {bubbles:true}));
+    """, element, value)
+
+
+def js_type_combobox(driver, element, value):
+    """Печатает в combobox-autocomplete атомарно через JS.
+
+    Для GXT/GWT-комбобоксов (корреспондент, адресат, исполнитель) —
+    выпадашка фильтруется по событиям input/keyup. Просто `value=...`
+    не открывает её. Здесь:
+      1) фокус
+      2) value = пустая строка → input/keyup (на всякий случай — сброс)
+      3) value = искомая строка → input/keyup → keypress → change
+    Этого хватает чтобы GXT-фильтр перерисовал список вариантов.
+    """
+    driver.execute_script("""
+        const el = arguments[0], v = arguments[1];
+        el.focus();
+        el.value = '';
+        el.dispatchEvent(new Event('input', {bubbles:true}));
+        el.dispatchEvent(new KeyboardEvent('keyup', {bubbles:true}));
+        el.value = v;
+        el.dispatchEvent(new Event('input', {bubbles:true}));
+        el.dispatchEvent(new KeyboardEvent('keydown', {bubbles:true}));
+        el.dispatchEvent(new KeyboardEvent('keypress', {bubbles:true}));
+        el.dispatchEvent(new KeyboardEvent('keyup', {bubbles:true}));
+        el.dispatchEvent(new Event('change', {bubbles:true}));
     """, element, value)

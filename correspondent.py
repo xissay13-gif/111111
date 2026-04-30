@@ -19,7 +19,7 @@ from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
-from ui import click, find_input_near_label, close_open_modals
+from ui import click, find_input_near_label, close_open_modals, js_type_combobox
 
 log = logging.getLogger("asud.correspondent")
 
@@ -367,7 +367,6 @@ def create_correspondent(driver, person_name):
                 return 'ok:'+el.id;
             """, input_id, value)
             log.info(f"  {label_text}: {value} [{result}]")
-            time.sleep(0.3)
 
         # Нажать "Добавить" в карточке
         save_btn = None
@@ -475,14 +474,9 @@ def fill_correspondent_field(driver, person_name):
     initials = fio_to_initials(person_name)
 
     inp.click()
-    time.sleep(0.3)
-    inp.clear()
-    time.sleep(0.3)
-    for char in surname:
-        inp.send_keys(char)
-        time.sleep(0.1)
-    log.info(f"Введена фамилия: {surname}")
-    time.sleep(2)
+    # Combobox-autocomplete: JS-set + dispatch events открывают выпадашку
+    js_type_combobox(driver, inp, surname)
+    log.info(f"Введена фамилия (JS): {surname}")
 
     def find_all():
         from selenium.webdriver.common.by import By as _By
@@ -502,12 +496,19 @@ def fill_correspondent_field(driver, person_name):
                 continue
         return out
 
-    all_results = find_all()
-    if not all_results:
-        from selenium.webdriver.common.keys import Keys as _Keys
-        inp.send_keys(_Keys.ENTER)
-        time.sleep(3)
+    # Ждём появления вариантов в выпадашке вместо sleep(2)
+    all_results = []
+    try:
+        WebDriverWait(driver, 5).until(lambda d: len(find_all()) > 0)
         all_results = find_all()
+    except Exception:
+        from selenium.webdriver.common.keys import Keys as _Keys
+        try:
+            inp.send_keys(_Keys.ENTER)
+            WebDriverWait(driver, 3).until(lambda d: len(find_all()) > 0)
+            all_results = find_all()
+        except Exception:
+            pass
 
     log.info(f"Кандидатов: {len(all_results)} (ищем '{initials}')")
 
