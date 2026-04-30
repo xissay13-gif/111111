@@ -463,89 +463,50 @@ def add_addressee(driver, person_name):
 
 # ================= REGISTRATION =================
 
-_ASUD_ID_RE = re.compile(
-    r'\b([А-Я]{2,5}(?:/[А-Я0-9.-]+){2,})\b',
-    re.UNICODE)
-
-
-def _looks_like_asud_id(txt):
-    """Похоже на регистрационный номер документа?
-    Примеры: ОПТС/8/19892, ОРТС/СЗ/ТЭС-03-УПО-02/176, РИК/ОРТС/2026/11.
-    Должен содержать /, длиннее 5, и НЕ быть датой."""
-    if not txt:
-        return False
-    txt = txt.strip()
-    if '/' not in txt or len(txt) < 6:
-        return False
-    if re.match(r'^\d{2}\.\d{2}\.\d{4}', txt):
-        return False
-    return True
+_CAPTURE_ASUD_ID_JS = r"""
+// Один проход по DOM на стороне браузера: ищем регистрационный номер.
+// Возвращает строку или null. Стратегии по убыванию точности:
+//   1. <b> внутри [data-marker='ScreenHeader1']
+//   2. любой <b> с подходящим текстом
+//   3. regex по тексту страницы
+const RE = /\b([А-Я]{2,5}(?:\/[А-Я0-9.\-]+){2,})\b/u;
+function looksLike(t) {
+    if (!t) return false;
+    t = t.trim();
+    if (!t.includes('/') || t.length < 6) return false;
+    if (/^\d{2}\.\d{2}\.\d{4}/.test(t)) return false;
+    return true;
+}
+const header = document.querySelector("[data-marker='ScreenHeader1']");
+if (header) {
+    for (const b of header.querySelectorAll('b')) {
+        const t = (b.textContent || '').trim();
+        if (looksLike(t)) return t;
+    }
+}
+for (const b of document.querySelectorAll('b')) {
+    const t = (b.textContent || '').trim();
+    if (looksLike(t)) return t;
+}
+const m = (document.body.innerText || '').match(RE);
+return m ? m[1] : null;
+"""
 
 
 def capture_asud_id(driver, timeout=15):
     """Читает регистрационный номер документа после регистрации.
-
-    Три стратегии (по убыванию точности):
-      1. [data-marker='ScreenHeader1'] → первый <b>
-      2. //*[@data-marker='ScreenHeader1']//b — все <b> с матчем по паттерну
-      3. Любой <b> на странице с подходящим текстом + regex по тексту страницы
-
-    Возвращает строку 'ОПТС/8/19892' / 'ОРТС/СЗ/ТЭС-03-УПО-02/176' или None.
-    """
+    Один JS-вызов на итерацию (быстрый поллинг 100ms).
+    Возвращает 'ОПТС/8/19892' / 'ОРТС/СЗ/ТЭС-03-УПО-02/176' или None."""
     end = time.monotonic() + timeout
-    last_dump = 0
     while time.monotonic() < end:
-        # Стратегия 1: ScreenHeader1 → первый <b>
         try:
-            header = driver.find_element(By.CSS_SELECTOR,
-                "[data-marker='ScreenHeader1']")
-            bolds = header.find_elements(By.CSS_SELECTOR, "b")
-            for b in bolds:
-                try:
-                    txt = (b.text or "").strip()
-                    if _looks_like_asud_id(txt):
-                        log.info(f"  asud_id [stratrgy 1: ScreenHeader1/b]: {txt!r}")
-                        return txt
-                except Exception:
-                    continue
+            asud_id = driver.execute_script(_CAPTURE_ASUD_ID_JS)
+            if asud_id:
+                log.info(f"  asud_id: {asud_id!r}")
+                return asud_id
         except Exception:
             pass
-
-        # Стратегия 2: явный XPath с фильтром по pattern
-        try:
-            for b in driver.find_elements(By.XPATH,
-                    "//*[@data-marker='ScreenHeader1']//b"):
-                txt = (b.text or "").strip()
-                if _looks_like_asud_id(txt):
-                    log.info(f"  asud_id [strategy 2: xpath]: {txt!r}")
-                    return txt
-        except Exception:
-            pass
-
-        # Каждые ~3 сек выводим snapshot DOM для диагностики
-        if time.monotonic() - last_dump > 3:
-            last_dump = time.monotonic()
-            try:
-                headers = driver.find_elements(By.CSS_SELECTOR,
-                    "[data-marker='ScreenHeader1']")
-                log.info(f"  ждём asud_id... ScreenHeader1 элементов: {len(headers)}")
-                if headers:
-                    inner = (headers[0].text or "")[:200].replace('\n', ' | ')
-                    log.info(f"    содержимое: {inner!r}")
-            except Exception:
-                pass
-
-        time.sleep(0.3)
-
-    # Стратегия 3 (last resort): regex по всему тексту страницы
-    try:
-        body_text = driver.find_element(By.TAG_NAME, "body").text
-        m = _ASUD_ID_RE.search(body_text)
-        if m:
-            log.info(f"  asud_id [strategy 3: regex page]: {m.group(1)!r}")
-            return m.group(1)
-    except Exception:
-        pass
+        time.sleep(0.1)
 
     log.warning("Регистрационный номер не захватили — пуст в output")
     return None

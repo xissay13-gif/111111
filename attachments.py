@@ -199,10 +199,9 @@ def attach_content(driver, file_path):
                 var el = arguments[0];
                 el.style.display='block'; el.style.visibility='visible';
                 el.style.opacity='1'; el.removeAttribute('hidden');
+                el.dispatchEvent(new Event('change',{bubbles:true}));
             """, inputs[0])
-            time.sleep(0.3)
             inputs[0].send_keys(file_path)
-            time.sleep(1)
             driver.execute_script(
                 "arguments[0].dispatchEvent(new Event('change',{bubbles:true}));",
                 inputs[0])
@@ -225,9 +224,8 @@ def attach_content(driver, file_path):
         log.error(f"Кнопка 'Присоединить содержимое' не найдена: {e}")
         return
 
-    time.sleep(2)
-
     try:
+        # Application.connect сам поллит до timeout — лишний sleep не нужен
         app = None
         for title_re in [".*Открыт.*", ".*Open.*", ".*Выбор.*", ".*Choose.*"]:
             try:
@@ -242,25 +240,21 @@ def attach_content(driver, file_path):
 
         dlg = app.top_window()
         dlg.set_focus()
-        time.sleep(0.5)
+        # pause=0 — pywinauto всё равно вставляет минимальные тики между ключами
         dlg.type_keys(_escape_for_type_keys(file_path),
-                      with_spaces=True, pause=0.02)
-        time.sleep(0.5)
+                      with_spaces=True, pause=0)
         dlg.type_keys("{ENTER}")
-        time.sleep(2)
         log.info(f"Файл выбран через Explorer")
     except Exception as e:
         log.error(f"Ошибка pywinauto: {e}")
         return
 
-    # Подтверждаем загрузку в модалке АСУД
-    time.sleep(2)
+    # Подтверждаем загрузку — WebDriverWait сам ждёт пока кнопка появится
     try:
-        confirm_btn = WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR,
+        confirm_btn = WebDriverWait(driver, 15).until(
+            EC.element_to_be_clickable((By.CSS_SELECTOR,
                 "#SetContentDialogBtnSend, [id*='SetContentDialogBtnSend']")))
         click(driver, confirm_btn, "Подтвердить присоединение")
-        time.sleep(3)
         log.info("Файл присоединён!")
     except Exception:
         try:
@@ -269,7 +263,6 @@ def attach_content(driver, file_path):
             visible = [b for b in btns if b.is_displayed()]
             if visible:
                 click(driver, visible[-1], "Подтвердить (fallback)")
-                time.sleep(3)
                 log.info("Файл присоединён (fallback)")
         except Exception as e:
             log.error(f"Ошибка подтверждения: {e}")
