@@ -711,21 +711,106 @@ def _wait_button_enabled(driver, btn_id, timeout=15):
     return None
 
 
+def _click_confirm_yes(driver, timeout=10):
+    """Ждёт и кликает 'Да' в confirm-диалоге АСУД (с fallback'ами).
+
+    Используется после 'Сохранить и отправить' (подтверждение
+    отправки адресатам) — аналогично confirm после 'На резолюцию'
+    в основных скриптах.
+    """
+    yes_btn = None
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        # 1) Точный id
+        try:
+            btn = driver.find_element(By.ID, "confirm_dialog_btn_yes")
+            if btn.is_displayed():
+                yes_btn = btn
+                break
+        except Exception:
+            pass
+        # 2) Substring id (GWT может префиксовать)
+        try:
+            btn = driver.find_element(By.CSS_SELECTOR,
+                "[id*='confirm_dialog_btn_yes'], [id*='confirm'][id*='yes']")
+            if btn.is_displayed():
+                yes_btn = btn
+                break
+        except Exception:
+            pass
+        # 3) По тексту "Да"
+        try:
+            for b in driver.find_elements(By.XPATH,
+                    "//*[normalize-space(text())='Да']"):
+                if b.is_displayed():
+                    yes_btn = b
+                    break
+        except Exception:
+            pass
+        if yes_btn:
+            break
+        time.sleep(0.5)
+
+    if not yes_btn:
+        log.warning("Confirm-диалог 'Да' не появился")
+        return False
+
+    try:
+        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", yes_btn)
+        time.sleep(0.3)
+    except Exception:
+        pass
+    clicked = False
+    try:
+        ActionChains(driver).move_to_element(yes_btn).pause(0.3).click().perform()
+        log.info(f"Клик 'Да' (ActionChains): id={yes_btn.get_attribute('id')}")
+        clicked = True
+    except Exception:
+        pass
+    if not clicked:
+        try:
+            driver.execute_script("arguments[0].click();", yes_btn)
+            log.info("Клик 'Да' (JS)")
+            clicked = True
+        except Exception:
+            pass
+    if not clicked:
+        try:
+            yes_btn.click()
+            log.info("Клик 'Да' (native)")
+            clicked = True
+        except Exception:
+            pass
+    if clicked:
+        try:
+            ActionChains(driver).send_keys(Keys.ENTER).perform()
+        except Exception:
+            pass
+    time.sleep(2)
+    return clicked
+
+
 def submit_resolution(driver):
-    """Финальный шаг — клик 'Сохранить и отправить'. Проверяет что диалог закрылся."""
+    """Финальный шаг: 'Сохранить и отправить' → confirm 'Да' → закрыть карточку."""
     btn = _wait_button_enabled(driver, "save_and_send_btn", timeout=15)
     if not btn:
         log.error("Кнопка 'Сохранить и отправить' не активировалась")
         return False
     click(driver, btn, "Сохранить и отправить")
-    time.sleep(3)
+    time.sleep(2)
 
-    # Проверка что диалог закрылся
+    # Подтверждение отправки адресатам
+    _click_confirm_yes(driver, timeout=10)
+    time.sleep(2)
+
+    # Может остаться открытой карточка документа — её закрываем отдельно
+    # в close_card_after_resolution. На случай если "Корневая резолюция"
+    # ещё открыта — закроем её через крестик в модалке.
     try:
         title = driver.find_element(By.XPATH,
             "//*[contains(text(),'Корневая резолюция')]")
         if title.is_displayed():
-            log.warning("Диалог не закрылся — пробую крестик")
+            log.warning("Модалка 'Корневая резолюция' не закрылась — крестик")
             close_open_modals(driver)
             time.sleep(1)
     except Exception:
@@ -734,15 +819,33 @@ def submit_resolution(driver):
 
 
 def close_card_after_resolution(driver):
-    """После выдачи резолюции карточка может остаться открытой — закрываем."""
+    """После выдачи резолюции возвращаемся в список через #header-close-btn."""
     time.sleep(2)
+    closed = False
     try:
         close_btn = driver.find_element(By.ID, "header-close-btn")
         if close_btn.is_displayed():
-            ActionChains(driver).move_to_element(close_btn).pause(0.3).click().perform()
-            time.sleep(2)
-            log.info("Карточка закрыта")
-            return
+            # Тот же набор стратегий что в основных скриптах
+            try:
+                driver.execute_script("arguments[0].scrollIntoView({block:'center'});", close_btn)
+                time.sleep(0.3)
+            except Exception:
+                pass
+            try:
+                ActionChains(driver).move_to_element(close_btn).pause(0.3).click().perform()
+                closed = True
+            except Exception:
+                pass
+            if not closed:
+                try:
+                    driver.execute_script("arguments[0].click();", close_btn)
+                    closed = True
+                except Exception:
+                    pass
+            if closed:
+                time.sleep(2)
+                log.info("Карточка закрыта")
+                return
     except Exception:
         pass
     log.info("Карточка уже закрыта или header-close-btn не найден")
