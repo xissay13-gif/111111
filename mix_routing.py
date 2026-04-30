@@ -505,64 +505,77 @@ def _looks_like_asud_id(txt):
 def capture_asud_id(driver, timeout=15):
     """Читает регистрационный номер документа после регистрации.
 
-    Три стратегии (по убыванию точности):
-      1. [data-marker='ScreenHeader1'] → первый <b>
-      2. //*[@data-marker='ScreenHeader1']//b — все <b> с матчем по паттерну
-      3. Любой <b> на странице с подходящим текстом + regex по тексту страницы
+    Стратегии (по убыванию точности):
+      1. [class*='headerInfoContainer'] → <b> (там лежит "№ ОРТС/8/23768")
+      2. [data-marker='ScreenHeader1'] → <b> (для других экранов)
+      3. Любой <b> на странице с подходящим pattern
+      4. regex по всему тексту страницы (last resort)
 
-    Возвращает строку 'ОПТС/8/19892' / 'ОРТС/СЗ/ТЭС-03-УПО-02/176' или None.
+    Возвращает строку 'ОРТС/8/23768' / 'ОРТС/СЗ/ТЭС-03-УПО-02/176' или None.
     """
     end = time.monotonic() + timeout
     last_dump = 0
     while time.monotonic() < end:
-        # Стратегия 1: ScreenHeader1 → первый <b>
+        # Стратегия 1: headerInfoContainer (основное место номера)
         try:
-            header = driver.find_element(By.CSS_SELECTOR,
-                "[data-marker='ScreenHeader1']")
-            bolds = header.find_elements(By.CSS_SELECTOR, "b")
-            for b in bolds:
+            for cont in driver.find_elements(By.CSS_SELECTOR,
+                    "[class*='headerInfoContainer']"):
+                for b in cont.find_elements(By.CSS_SELECTOR, "b"):
+                    txt = (b.text or "").strip()
+                    if _looks_like_asud_id(txt):
+                        log.info(f"  asud_id [s1 headerInfoContainer]: {txt!r}")
+                        return txt
+        except Exception:
+            pass
+
+        # Стратегия 2: ScreenHeader1 (на случай если в новых версиях АСУД переехало)
+        try:
+            for cont in driver.find_elements(By.CSS_SELECTOR,
+                    "[data-marker='ScreenHeader1']"):
+                for b in cont.find_elements(By.CSS_SELECTOR, "b"):
+                    txt = (b.text or "").strip()
+                    if _looks_like_asud_id(txt):
+                        log.info(f"  asud_id [s2 ScreenHeader1]: {txt!r}")
+                        return txt
+        except Exception:
+            pass
+
+        # Стратегия 3: любой <b> на странице с подходящим pattern
+        try:
+            for b in driver.find_elements(By.TAG_NAME, "b"):
                 try:
                     txt = (b.text or "").strip()
                     if _looks_like_asud_id(txt):
-                        log.info(f"  asud_id [stratrgy 1: ScreenHeader1/b]: {txt!r}")
+                        log.info(f"  asud_id [s3 any-b]: {txt!r}")
                         return txt
                 except Exception:
                     continue
         except Exception:
             pass
 
-        # Стратегия 2: явный XPath с фильтром по pattern
-        try:
-            for b in driver.find_elements(By.XPATH,
-                    "//*[@data-marker='ScreenHeader1']//b"):
-                txt = (b.text or "").strip()
-                if _looks_like_asud_id(txt):
-                    log.info(f"  asud_id [strategy 2: xpath]: {txt!r}")
-                    return txt
-        except Exception:
-            pass
-
-        # Каждые ~3 сек выводим snapshot DOM для диагностики
+        # Каждые ~3 сек диагностика
         if time.monotonic() - last_dump > 3:
             last_dump = time.monotonic()
             try:
-                headers = driver.find_elements(By.CSS_SELECTOR,
+                cont = driver.find_elements(By.CSS_SELECTOR,
+                    "[class*='headerInfoContainer']")
+                hdr = driver.find_elements(By.CSS_SELECTOR,
                     "[data-marker='ScreenHeader1']")
-                log.info(f"  ждём asud_id... ScreenHeader1 элементов: {len(headers)}")
-                if headers:
-                    inner = (headers[0].text or "")[:200].replace('\n', ' | ')
-                    log.info(f"    содержимое: {inner!r}")
+                log.info(f"  ждём asud_id... headerInfo:{len(cont)} screenHdr:{len(hdr)}")
+                if cont:
+                    inner = (cont[0].text or "")[:200].replace('\n', ' | ')
+                    log.info(f"    headerInfo: {inner!r}")
             except Exception:
                 pass
 
         time.sleep(0.3)
 
-    # Стратегия 3 (last resort): regex по всему тексту страницы
+    # Стратегия 4: regex по всему тексту страницы
     try:
         body_text = driver.find_element(By.TAG_NAME, "body").text
         m = _ASUD_ID_RE.search(body_text)
         if m:
-            log.info(f"  asud_id [strategy 3: regex page]: {m.group(1)!r}")
+            log.info(f"  asud_id [s4 regex page]: {m.group(1)!r}")
             return m.group(1)
     except Exception:
         pass
