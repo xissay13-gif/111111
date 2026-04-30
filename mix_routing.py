@@ -440,25 +440,31 @@ def add_addressee(driver, person_name):
 
     surname = person_name.split()[0]
     inp.click()
-    time.sleep(0.5)
     inp.clear()
-    time.sleep(0.3)
     for char in surname:
         inp.send_keys(char)
-        time.sleep(0.1)
-    time.sleep(2)
+        time.sleep(0.05)
 
     from correspondent import match_correspondent
-    results = driver.find_elements(By.XPATH, f"//*[contains(text(),'{surname}')]")
-    all_results = [r for r in results
-                   if r.is_displayed() and r != inp and r.tag_name.lower() != 'input']
 
-    if not all_results:
-        inp.send_keys(Keys.ENTER)
-        time.sleep(2)
+    # Ждём появления вариантов в выпадашке вместо фиксированного sleep(2)
+    def _surname_options():
         results = driver.find_elements(By.XPATH, f"//*[contains(text(),'{surname}')]")
-        all_results = [r for r in results
-                       if r.is_displayed() and r != inp and r.tag_name.lower() != 'input']
+        return [r for r in results
+                if r.is_displayed() and r != inp and r.tag_name.lower() != 'input']
+
+    all_results = []
+    try:
+        WebDriverWait(driver, 5).until(lambda d: len(_surname_options()) > 0)
+        all_results = _surname_options()
+    except Exception:
+        # Дропнуть Enter и ещё подождать — fallback
+        try:
+            inp.send_keys(Keys.ENTER)
+            WebDriverWait(driver, 3).until(lambda d: len(_surname_options()) > 0)
+            all_results = _surname_options()
+        except Exception:
+            pass
 
     target = None
     for r in all_results:
@@ -473,9 +479,7 @@ def add_addressee(driver, person_name):
 
     if target:
         driver.execute_script("arguments[0].scrollIntoView({block:'center'});", target)
-        time.sleep(0.3)
-        ActionChains(driver).move_to_element(target).pause(0.3).click().perform()
-        time.sleep(1)
+        ActionChains(driver).move_to_element(target).pause(0.2).click().perform()
         log.info(f"Адресат добавлен: {person_name}")
     else:
         log.warning(f"Адресат не найден: {person_name}")
@@ -581,8 +585,7 @@ def register_and_resolve(driver, index, total):
             EC.presence_of_element_located((By.CSS_SELECTOR,
                 "#header-action-btn-register, [id*='header-action-btn-register']")))
         click(driver, btn, "Зарегистрировать")
-        time.sleep(3)
-        # Захват номера документа после регистрации
+        # capture_asud_id внутри сам ждёт через WebDriverWait — sleep не нужен
         asud_id = capture_asud_id(driver, timeout=10)
         if asud_id:
             log.info(f"Документ {index}/{total} ЗАРЕГИСТРИРОВАН: {asud_id}")
@@ -593,7 +596,6 @@ def register_and_resolve(driver, index, total):
         try:
             btn = driver.find_element(By.XPATH, "//div[contains(text(),'Зарегистрировать')]")
             click(driver, btn, "Зарегистрировать (fallback)")
-            time.sleep(3)
             registered = True
         except Exception as e:
             log.error(f"'Зарегистрировать' не найдена: {e}")
@@ -627,9 +629,8 @@ def register_and_resolve(driver, index, total):
         return asud_id
 
     click(driver, res_btn, "На резолюцию")
-    time.sleep(2)
 
-    # Да
+    # Да — сразу опрашиваем DOM, sleep не нужен (внутри цикла уже есть time.sleep(1) между попытками)
     yes_btn = None
     for _ in range(10):
         # 1) Точный id
@@ -697,7 +698,12 @@ def register_and_resolve(driver, index, total):
                 ActionChains(driver).send_keys(Keys.ENTER).perform()
             except Exception:
                 pass
-        time.sleep(3)
+        # Ждём пока модалка закроется (диалог 'Да' уйдёт из DOM)
+        try:
+            WebDriverWait(driver, 5).until_not(
+                EC.visibility_of(yes_btn))
+        except Exception:
+            pass
         log.info(f"Документ {index}/{total} НА РЕЗОЛЮЦИИ")
     else:
         log.warning("Диалог 'Да' не появился за 10 сек")
@@ -706,18 +712,17 @@ def register_and_resolve(driver, index, total):
 
 def close_card_and_wait_main(driver):
     """Закрывает карточку через header-close-btn и ждёт главную страницу."""
-    time.sleep(2)
     try:
         close_btn = driver.find_element(By.ID, "header-close-btn")
         if close_btn.is_displayed():
-            ActionChains(driver).move_to_element(close_btn).pause(0.3).click().perform()
-            time.sleep(2)
+            ActionChains(driver).move_to_element(close_btn).pause(0.2).click().perform()
             log.info("Карточка закрыта")
         else:
             log.info("Карточка уже закрыта")
     except Exception:
         log.info("Карточка уже закрыта")
 
+    # Ждём главную напрямую — это и есть «карточка ушла + список загружен»
     try:
         WebDriverWait(driver, 10).until(
             EC.element_to_be_clickable((By.ID, "mainscreen-create-button")))
@@ -740,26 +745,28 @@ def create_one_document(driver, doc_data, index, total):
     # [1/7] Кнопка создания
     el = WebDriverWait(driver, cfg.DEFAULTS["timeout"]).until(
         EC.presence_of_element_located((By.ID, "mainscreen-create-button")))
-    time.sleep(1)
     click(driver, el, "Создать документ")
-    time.sleep(3)
 
     # [2/7] Входящий документ
     wait_and_click(driver, By.XPATH,
         "//div[contains(text(),'Входящий документ')]", "Входящий документ")
-    time.sleep(1)
 
     # [3/7] Вид
     subtype = doc_data.get("тип_название", "Письма, заявления и жалобы граждан, акционеров")
     short = subtype[:30]
     wait_and_click(driver, By.XPATH,
         f"//div[contains(text(),'{short}')] | //td[contains(text(),'{short}')]", subtype)
-    time.sleep(0.5)
 
     wait_and_click(driver, By.XPATH,
         "//button[contains(text(),'Создать документ')] | //div[contains(text(),'Создать документ')]",
         "Создать документ")
-    time.sleep(5)
+
+    # Ждём пока форма документа отрендерится — появится textarea (краткое содержание)
+    try:
+        WebDriverWait(driver, cfg.DEFAULTS["timeout"]).until(
+            lambda d: any(t.is_displayed() for t in d.find_elements(By.TAG_NAME, "textarea")))
+    except Exception:
+        log.warning("Textarea формы не появилась — продолжаю по таймауту")
 
     # [4/7] Заполнение формы
     fill_text(driver, doc_data["содержание"])
@@ -769,17 +776,21 @@ def create_one_document(driver, doc_data, index, total):
 
     for addr in settings.get("addressees", cfg.DEFAULTS["addressees"]):
         add_addressee(driver, addr)
-        time.sleep(0.5)
 
     fill_delivery_method(driver)
-    time.sleep(0.5)
 
     # [5/7] Сохранение
     try:
         save_btn = WebDriverWait(driver, cfg.DEFAULTS["timeout"]).until(
             EC.element_to_be_clickable((By.ID, "header-save-btn")))
         click(driver, save_btn, "Сохранить")
-        time.sleep(3)
+        # Ждём кнопку 'Зарегистрировать' — признак что save прошёл и форма ушла в режим регистрации
+        try:
+            WebDriverWait(driver, cfg.DEFAULTS["timeout"]).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR,
+                    "#header-action-btn-register, [id*='header-action-btn-register']")))
+        except Exception:
+            log.warning("После Сохранить кнопка 'Зарегистрировать' не появилась")
         log.info(f"Документ {index}/{total} сохранён")
     except Exception as e:
         log.error(f"Ошибка сохранения: {e}")

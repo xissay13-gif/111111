@@ -18,19 +18,20 @@ log = logging.getLogger("asud.ui")
 
 def click(driver, element, description=""):
     """Единый клик с fallback'ами для GWT/GXT.
-    Порядок: ActionChains → native → JS → mouse events."""
+    Порядок: ActionChains → native → JS → mouse events.
+
+    Без post-sleep — caller сам ждёт следующий элемент через WebDriverWait.
+    """
     try:
         driver.execute_script(
             "arguments[0].scrollIntoView({block:'center',inline:'center'});", element)
-        time.sleep(0.2)
     except Exception:
         pass
 
     # ActionChains — лучше всего для GXT dropdown/autocomplete
     try:
-        ActionChains(driver).move_to_element(element).pause(0.2).click().perform()
+        ActionChains(driver).move_to_element(element).pause(0.15).click().perform()
         log.info(f"Клик (mouse): {description}")
-        time.sleep(0.5)
         return True
     except Exception:
         pass
@@ -39,7 +40,6 @@ def click(driver, element, description=""):
     try:
         element.click()
         log.info(f"Клик (native): {description}")
-        time.sleep(0.5)
         return True
     except Exception:
         pass
@@ -48,7 +48,6 @@ def click(driver, element, description=""):
     try:
         driver.execute_script("arguments[0].click();", element)
         log.info(f"Клик (JS): {description}")
-        time.sleep(0.5)
         return True
     except Exception:
         pass
@@ -62,7 +61,6 @@ def click(driver, element, description=""):
             });
         """, element)
         log.info(f"Клик (events): {description}")
-        time.sleep(0.5)
         return True
     except Exception as e:
         log.error(f"Клик не удался: {description}: {e}")
@@ -70,18 +68,16 @@ def click(driver, element, description=""):
 
 
 def wait_and_click(driver, by, selector, description="", timeout=20):
-    """Ждёт элемент и кликает."""
+    """Ждёт элемент и кликает. Без post-sleep."""
     log.info(f"Ожидаю: {description or selector}")
     el = WebDriverWait(driver, timeout).until(
         EC.presence_of_element_located((by, selector))
     )
-    time.sleep(0.5)
     try:
         el.click()
     except Exception:
         driver.execute_script("arguments[0].click();", el)
     log.info(f"Клик: {description or selector}")
-    time.sleep(0.5)
     return el
 
 
@@ -131,7 +127,6 @@ def wait_asud_loaded(driver, max_wait=120):
     except Exception:
         log.warning("Данные в таблице не появились")
 
-    time.sleep(5)
     log.info("АСУД загружен")
 
 
