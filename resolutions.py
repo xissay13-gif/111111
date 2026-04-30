@@ -612,65 +612,117 @@ def _card_opened(driver, timeout):
         return False
 
 
-def open_doc_card(driver, row):
-    """Открывает карточку документа двойным кликом по строке.
+def _refresh_first_row(driver):
+    """Возвращает свежий <tr> первой видимой строки таблицы (после фильтра).
 
-    GWT часто игнорирует ActionChains-double_click по <tr>, поэтому
-    пробуем несколько стратегий по очереди:
-      1) double-click ActionChains по строке (row)
-      2) single click → пауза → double-click ActionChains по первой <td>
-      3) dispatchEvent('dblclick') через JS на строке и на первой <td>
-      4) click по <a>/`.gwt-Anchor` если такой есть в строке
+    Хитрость GXT: после фильтра старая ссылка на <tr> часто становится
+    stale — пересортировка перерисовывает грид.
     """
     try:
-        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", row)
+        rows = driver.find_elements(By.XPATH,
+            f"//table[@id='{LIST_TABLE_ID}']//tbody/tr")
+        for r in rows:
+            try:
+                if r.is_displayed() and (r.text or '').strip():
+                    return r
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return None
+
+
+def _meaningful_cell(row):
+    """Берёт ячейку с текстом (subject/тип) — не чекбокс, не иконку."""
+    try:
+        tds = row.find_elements(By.XPATH, ".//td")
+    except Exception:
+        return None
+    best = None
+    for td in tds:
+        try:
+            if not td.is_displayed():
+                continue
+            txt = (td.text or '').strip()
+            if len(txt) > 10:  # пропускаем чекбоксы/иконки
+                return td
+            if best is None and td.size.get('width', 0) > 50:
+                best = td
+        except Exception:
+            continue
+    return best
+
+
+def open_doc_card(driver, row):
+    """Открывает карточку документа.
+
+    GXT-сетка обычно реагирует так: одиночный клик выделяет строку
+    (добавляет класс rowSelected), а двойной открывает карточку.
+    ActionChains.double_click по разным причинам часто не срабатывает,
+    поэтому пробуем несколько стратегий по очереди.
+    """
+    # Свежая ссылка — пред. могла стать stale
+    fresh = _refresh_first_row(driver) or row
+
+    try:
+        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", fresh)
         time.sleep(0.3)
     except Exception:
         pass
 
-    # Стратегия 1: ActionChains double-click по <tr>
+    # Берём содержательную ячейку (Subject/Тип) — не чекбокс
+    target_cell = _meaningful_cell(fresh) or fresh
+
+    # ── Стратегия 1: single click + Enter (самый надёжный для GXT)
     try:
-        ActionChains(driver).move_to_element(row).pause(0.2).double_click().perform()
+        ActionChains(driver).move_to_element(target_cell).pause(0.15).click().perform()
+        time.sleep(0.4)
+        ActionChains(driver).send_keys(Keys.ENTER).perform()
     except Exception as e:
-        log.debug(f"strat1 dblclick<tr> err: {e}")
-    if _card_opened(driver, timeout=4):
+        log.debug(f"strat1 click+Enter err: {e}")
+    if _card_opened(driver, timeout=5):
+        log.info("  карточка открыта: click + Enter")
         return True
 
-    # Достаём первую видимую ячейку
-    first_td = None
+    # ── Стратегия 2: ActionChains double-click по содержательной ячейке
     try:
-        tds = row.find_elements(By.XPATH, ".//td")
-        for td in tds:
-            if td.is_displayed():
-                first_td = td
-                break
-    except Exception:
-        pass
+        fresh2 = _refresh_first_row(driver) or fresh
+        cell2 = _meaningful_cell(fresh2) or fresh2
+        ActionChains(driver).move_to_element(cell2).pause(0.2).double_click().perform()
+    except Exception as e:
+        log.debug(f"strat2 dblclick<td> err: {e}")
+    if _card_opened(driver, timeout=4):
+        log.info("  карточка открыта: ActionChains dblclick")
+        return True
 
-    # Стратегия 2: single click → пауза → double-click по первой <td>
-    if first_td is not None:
-        try:
-            ActionChains(driver).move_to_element(first_td).pause(0.2).click().pause(0.3).double_click().perform()
-        except Exception as e:
-            log.debug(f"strat2 click+dbl<td> err: {e}")
-        if _card_opened(driver, timeout=4):
-            return True
-
-    # Стратегия 3: JS dispatchEvent('dblclick')
+    # ── Стратегия 3: JS — полная mouse-event цепочка (mousedown/up/click x2 + dblclick)
     try:
+        fresh3 = _refresh_first_row(driver) or fresh
+        cell3 = _meaningful_cell(fresh3) or fresh3
         driver.execute_script("""
             const el = arguments[0];
-            const ev = new MouseEvent('dblclick', {bubbles:true, cancelable:true, view:window});
-            el.dispatchEvent(ev);
-        """, first_td if first_td is not None else row)
+            const r = el.getBoundingClientRect();
+            const x = r.left + r.width/2, y = r.top + r.height/2;
+            const opts = {bubbles:true, cancelable:true, view:window,
+                          button:0, buttons:1, clientX:x, clientY:y};
+            for (const t of ['mousedown','mouseup','click']) {
+                el.dispatchEvent(new MouseEvent(t, {...opts, detail:1}));
+            }
+            for (const t of ['mousedown','mouseup','click']) {
+                el.dispatchEvent(new MouseEvent(t, {...opts, detail:2}));
+            }
+            el.dispatchEvent(new MouseEvent('dblclick', {...opts, detail:2}));
+        """, cell3)
     except Exception as e:
-        log.debug(f"strat3 js-dblclick err: {e}")
+        log.debug(f"strat3 js-event-chain err: {e}")
     if _card_opened(driver, timeout=4):
+        log.info("  карточка открыта: JS event chain")
         return True
 
-    # Стратегия 4: клик по ссылке внутри строки (часто номер документа — <a>)
+    # ── Стратегия 4: клик по ссылке/anchor если есть
     try:
-        links = row.find_elements(By.XPATH,
+        fresh4 = _refresh_first_row(driver) or fresh
+        links = fresh4.find_elements(By.XPATH,
             ".//a | .//*[contains(@class,'gwt-Anchor')] | .//*[contains(@class,'cellClickable')]")
         for lnk in links:
             if lnk.is_displayed():
@@ -682,6 +734,7 @@ def open_doc_card(driver, row):
                     except Exception:
                         continue
                 if _card_opened(driver, timeout=4):
+                    log.info("  карточка открыта: link-click")
                     return True
     except Exception as e:
         log.debug(f"strat4 link-click err: {e}")
