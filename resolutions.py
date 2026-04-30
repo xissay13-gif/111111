@@ -266,14 +266,82 @@ def _resolve_executor(ao, fio, ls=None, textbody=None):
 
 
 def load_excel(file_path):
-    """Читает Лист2. Колонки: Link, Subject, TextBody, Тема, To, LS, ao, fio."""
-    sheet_name = settings.get("sheet_name", cfg.DEFAULTS["sheet_name"])
+    """Читает таблицу резолюций. Ожидаемые колонки (любой порядок,
+    распознаются по заголовку): ОПТС, Округ, ФИО, Link.
+
+    Если файл — старый формат (Лист2 с TextBody) — fallback на адрес-парсер.
+    """
     wb = openpyxl.load_workbook(file_path, data_only=True)
-    if sheet_name in wb.sheetnames:
-        ws = wb[sheet_name]
-    else:
-        log.warning(f"Лист '{sheet_name}' не найден, использую активный: {wb.active.title}")
-        ws = wb.active
+    ws = wb.active
+
+    # Заголовки
+    header = [str(c.value or '').strip() for c in next(ws.iter_rows(max_row=1))]
+    header_lower = [h.lower() for h in header]
+    log.info(f"Заголовки: {header}")
+
+    # Если это _резолюции.xlsx (есть колонка ОПТС/asud_id)
+    asud_keys = ('опт', 'орт', 'асуд', 'asud', 'регистрацион')
+    fio_keys = ('фио', 'исполнит')
+    okrug_keys = ('округ', 'ао')
+    link_keys = ('link', 'ссылк')
+
+    def _col(predicate_keys):
+        for i, h in enumerate(header_lower):
+            for k in predicate_keys:
+                if k in h:
+                    return i
+        return None
+
+    asud_col = _col(asud_keys)
+    if asud_col is not None:
+        # Формат _резолюции.xlsx
+        fio_col = _col(fio_keys)
+        okrug_col = _col(okrug_keys)
+        link_col = _col(link_keys)
+        log.info(f"Формат _резолюции: ОПТС=col{asud_col}, "
+                 f"ФИО=col{fio_col}, Округ=col{okrug_col}, Link=col{link_col}")
+
+        rows = []
+        for row_idx, row in enumerate(ws.iter_rows(min_row=2, values_only=True), 2):
+            if not row:
+                continue
+            asud_id = str(row[asud_col]).strip() if row[asud_col] else ''
+            fio = str(row[fio_col]).strip() if (fio_col is not None and row[fio_col]) else ''
+            ao = str(row[okrug_col]).strip() if (okrug_col is not None and row[okrug_col]) else ''
+            link = row[link_col] if (link_col is not None) else None
+
+            # Если ФИО пуст, но Округ есть — пытаемся через мапу
+            if not fio and ao:
+                fio = cfg.DEFAULT_OKRUG_MAP.get(ao, '')
+
+            if not asud_id and not link:
+                continue
+
+            rows.append({
+                "row_idx": row_idx,
+                "asud_id": asud_id,
+                "executor": fio,
+                "ao": ao,
+                "link": link,
+                "subject": "",
+                "textbody": "",
+                "appeal_no": None,
+                "ls": "",
+            })
+        wb.close()
+        log.info(f"Загружено: {len(rows)} строк (формат _резолюции)")
+        no_asud = sum(1 for r in rows if not r['asud_id'])
+        no_fio = sum(1 for r in rows if not r['executor'])
+        if no_asud:
+            log.warning(f"  без ОПТС/ОРТС: {no_asud} (попробую матч по тексту)")
+        if no_fio:
+            log.warning(f"  без ФИО: {no_fio} (будут пропущены)")
+        return rows
+
+    # FALLBACK: старый формат — Почта_ТЭС.xlsx Лист2
+    log.warning("Колонка ОПТС не найдена — пробую старый формат Лист2")
+    if 'Лист2' in wb.sheetnames:
+        ws = wb['Лист2']
 
     rows = []
     skipped = 0
@@ -284,22 +352,17 @@ def load_excel(file_path):
         link = row[0]
         subject = row[1]
         textbody = row[2] or ''
-        # row[3] = Тема (тип, не нужно для резолюций)
-        # row[4] = To
-        # row[5] = LS
         ls = row[5] if len(row) > 5 else None
         ao = row[6] if len(row) > 6 else None
         fio = row[7] if len(row) > 7 else None
-
         if not link and not subject:
             skipped += 1
             continue
-
         executor = _resolve_executor(ao, fio, ls, textbody)
         appeal_no = _extract_appeal_no(textbody)
-
         rows.append({
             "row_idx": row_idx,
+            "asud_id": "",
             "link": link,
             "subject": str(subject or '').strip(),
             "textbody": str(textbody),
@@ -308,17 +371,8 @@ def load_excel(file_path):
             "executor": executor,
             "appeal_no": appeal_no,
         })
-
     wb.close()
-
-    log.info(f"Загружено: {len(rows)}, пропущено: {skipped}")
-    no_executor = sum(1 for r in rows if not r['executor'])
-    no_match = sum(1 for r in rows if not r['appeal_no'])
-    if no_executor:
-        log.warning(f"  без исполнителя: {no_executor} (будут пропущены)")
-    if no_match:
-        log.warning(f"  без номера обращения: {no_match} (fallback на подстроку TextBody)")
-
+    log.info(f"Загружено: {len(rows)} (старый формат), пропущено: {skipped}")
     return rows
 
 
@@ -444,60 +498,107 @@ def click_sidebar_section(driver, section_text):
 
 LIST_TABLE_ID = "CABINET_MENU__RECEIVED__ALL_ACTIVE__TO_RESOLUTION"
 
+# Фильтр-input под колонкой "Номер" — стабильный id из DOM
+NUMBER_FILTER_INPUT_ID = "FCPC_Номер-input"
+NUMBER_FILTER_CONTAINER_ID = "FCPC_Номер"
 
-def find_doc_row(driver, doc, timeout=10):
-    """Находит <tr> в таблице списка, который соответствует doc (строке реестра).
 
-    Стратегии (по убыванию точности):
-      1. По номеру обращения "5417313" из TextBody
-      2. По первым 60 символам TextBody (substring)
-      3. По Subject (как очень слабый fallback)
+def _set_filter_value(driver, container_id, input_id, value):
+    """JS-ввод в фильтр колонки — без эмуляции клавиатуры (фон-friendly)."""
+    try:
+        inp = driver.find_element(By.ID, input_id)
+    except Exception:
+        try:
+            container = driver.find_element(By.ID, container_id)
+            inp = container.find_element(By.CSS_SELECTOR, "input[type='text']")
+        except Exception as e:
+            log.warning(f"Фильтр {container_id}: input не найден ({e})")
+            return False
+    try:
+        driver.execute_script("""
+            var el = arguments[0], v = arguments[1];
+            el.focus();
+            el.value = v;
+            el.dispatchEvent(new Event('input', {bubbles:true}));
+            el.dispatchEvent(new Event('keyup', {bubbles:true}));
+            el.dispatchEvent(new Event('change', {bubbles:true}));
+        """, inp, value)
+        return True
+    except Exception as e:
+        log.warning(f"JS-ввод в фильтр упал: {e}")
+        return False
+
+
+def filter_by_number(driver, asud_id):
+    """Вбивает ОПТС/ОРТС-номер в фильтр колонки 'Номер'.
+    Возвращает True если удалось ввести."""
+    log.info(f"Фильтр 'Номер' = {asud_id}")
+    return _set_filter_value(driver, NUMBER_FILTER_CONTAINER_ID,
+                              NUMBER_FILTER_INPUT_ID, asud_id)
+
+
+def clear_filter(driver):
+    """Очищает фильтр колонки 'Номер'."""
+    _set_filter_value(driver, NUMBER_FILTER_CONTAINER_ID,
+                       NUMBER_FILTER_INPUT_ID, "")
+    time.sleep(0.5)
+
+
+def find_doc_row(driver, doc, timeout=8):
+    """Находит <tr> в таблице списка после применения фильтра.
+
+    Стратегия:
+      1. Если есть doc['asud_id'] — вбить в фильтр 'Номер' → взять первую строку
+      2. Иначе — поиск по тексту (appeal_no / TextBody / Subject) как раньше
     """
+    asud_id = doc.get('asud_id') or ''
+
+    # Главная стратегия: фильтр по точному номеру
+    if asud_id:
+        if filter_by_number(driver, asud_id):
+            time.sleep(1.5)  # дебаунс GWT-фильтра
+            end = time.monotonic() + timeout
+            while time.monotonic() < end:
+                try:
+                    rows = driver.find_elements(By.XPATH,
+                        f"//table[@id='{LIST_TABLE_ID}']//tbody/tr")
+                    visible_rows = [r for r in rows if r.is_displayed()
+                                    and (r.text or '').strip()]
+                    if visible_rows:
+                        log.info(f"  match по фильтру: {asud_id} ({len(visible_rows)} строк)")
+                        return visible_rows[0]
+                except Exception:
+                    pass
+                time.sleep(0.5)
+            log.warning(f"  фильтр {asud_id} → 0 строк")
+            return None
+
+    # Fallback на текстовый поиск (без фильтра — сканируем что в DOM)
     end = time.monotonic() + timeout
     while time.monotonic() < end:
-        # 1) номер обращения
         if doc.get('appeal_no'):
             try:
                 row = driver.find_element(By.XPATH,
                     f"//table[@id='{LIST_TABLE_ID}']"
                     f"//tr[contains(., '{doc['appeal_no']}')]")
                 if row.is_displayed():
-                    log.info(f"  match: appeal № {doc['appeal_no']}")
+                    log.info(f"  match (fallback): appeal № {doc['appeal_no']}")
                     return row
             except Exception:
                 pass
-
-        # 2) подстрока TextBody (первые 60 символов)
         body = (doc.get('textbody') or '').replace('\xa0', ' ').strip()
-        snippet = re.sub(r'\s+', ' ', body)[:60].strip()
-        # экранируем кавычки для XPath
-        snippet_safe = snippet.replace("'", "")[:60].strip()
-        if len(snippet_safe) >= 20:
+        snippet = re.sub(r'\s+', ' ', body)[:60].strip().replace("'", "")
+        if len(snippet) >= 20:
             try:
                 row = driver.find_element(By.XPATH,
                     f"//table[@id='{LIST_TABLE_ID}']"
-                    f"//tr[contains(., \"{snippet_safe}\")]")
+                    f"//tr[contains(., \"{snippet}\")]")
                 if row.is_displayed():
-                    log.info(f"  match: подстрока TextBody")
+                    log.info(f"  match (fallback): TextBody")
                     return row
             except Exception:
                 pass
-
-        # 3) по Subject
-        subj = (doc.get('subject') or '').strip()
-        if subj and len(subj) >= 10:
-            try:
-                row = driver.find_element(By.XPATH,
-                    f"//table[@id='{LIST_TABLE_ID}']"
-                    f"//tr[contains(., '{subj[:40]}')]")
-                if row.is_displayed():
-                    log.info(f"  match: subject")
-                    return row
-            except Exception:
-                pass
-
         time.sleep(0.5)
-
     return None
 
 
@@ -924,6 +1025,8 @@ def process_one(driver, doc, index, total):
 
     # 11. Закрыть карточку (если осталась открыта)
     close_card_after_resolution(driver)
+    # 12. Очистить фильтр для следующей итерации
+    clear_filter(driver)
     log.info(f"Документ {index}/{total} ОБРАБОТАН")
     return True
 
@@ -938,13 +1041,16 @@ def _choose_xlsx(base_dir):
         log.error(f"Нет .xlsx в {base_dir}")
         input("Enter...")
         sys.exit(1)
+    # Сортируем — файлы с '_резолюции' в имени идут первыми (наш формат)
+    files.sort(key=lambda f: (0 if 'резолюции' in f.lower() else 1, f))
     if len(files) == 1:
         log.info(f"Файл: {files[0]}")
         return os.path.join(base_dir, files[0])
     print(f"\nНайдено {len(files)} xlsx-файлов:")
     for i, f in enumerate(files, 1):
-        print(f"  {i}. {f}")
-    choice = input("Выбери номер: ").strip()
+        marker = ' ← рекомендую' if 'резолюции' in f.lower() and i == 1 else ''
+        print(f"  {i}. {f}{marker}")
+    choice = input("Выбери номер [1]: ").strip() or "1"
     try:
         return os.path.join(base_dir, files[int(choice) - 1])
     except (ValueError, IndexError):
