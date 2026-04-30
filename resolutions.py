@@ -602,24 +602,92 @@ def find_doc_row(driver, doc, timeout=8):
     return None
 
 
+def _card_opened(driver, timeout):
+    """Признак открывшейся карточки — кнопка 'Создать резолюцию'."""
+    try:
+        WebDriverWait(driver, timeout).until(
+            EC.presence_of_element_located((By.ID, "header-action-btn-add_resolution")))
+        return True
+    except Exception:
+        return False
+
+
 def open_doc_card(driver, row):
-    """Открывает карточку документа двойным кликом по строке."""
+    """Открывает карточку документа двойным кликом по строке.
+
+    GWT часто игнорирует ActionChains-double_click по <tr>, поэтому
+    пробуем несколько стратегий по очереди:
+      1) double-click ActionChains по строке (row)
+      2) single click → пауза → double-click ActionChains по первой <td>
+      3) dispatchEvent('dblclick') через JS на строке и на первой <td>
+      4) click по <a>/`.gwt-Anchor` если такой есть в строке
+    """
     try:
         driver.execute_script("arguments[0].scrollIntoView({block:'center'});", row)
         time.sleep(0.3)
+    except Exception:
+        pass
+
+    # Стратегия 1: ActionChains double-click по <tr>
+    try:
         ActionChains(driver).move_to_element(row).pause(0.2).double_click().perform()
-        time.sleep(2)
-        # Ждём появления кнопки "Создать резолюцию" — индикатор открытой карточки
-        try:
-            WebDriverWait(driver, 15).until(
-                EC.presence_of_element_located((By.ID, "header-action-btn-add_resolution")))
-            return True
-        except Exception:
-            log.warning("Карточка не открылась за 15 сек")
-            return False
     except Exception as e:
-        log.error(f"Не удалось открыть карточку: {e}")
-        return False
+        log.debug(f"strat1 dblclick<tr> err: {e}")
+    if _card_opened(driver, timeout=4):
+        return True
+
+    # Достаём первую видимую ячейку
+    first_td = None
+    try:
+        tds = row.find_elements(By.XPATH, ".//td")
+        for td in tds:
+            if td.is_displayed():
+                first_td = td
+                break
+    except Exception:
+        pass
+
+    # Стратегия 2: single click → пауза → double-click по первой <td>
+    if first_td is not None:
+        try:
+            ActionChains(driver).move_to_element(first_td).pause(0.2).click().pause(0.3).double_click().perform()
+        except Exception as e:
+            log.debug(f"strat2 click+dbl<td> err: {e}")
+        if _card_opened(driver, timeout=4):
+            return True
+
+    # Стратегия 3: JS dispatchEvent('dblclick')
+    try:
+        driver.execute_script("""
+            const el = arguments[0];
+            const ev = new MouseEvent('dblclick', {bubbles:true, cancelable:true, view:window});
+            el.dispatchEvent(ev);
+        """, first_td if first_td is not None else row)
+    except Exception as e:
+        log.debug(f"strat3 js-dblclick err: {e}")
+    if _card_opened(driver, timeout=4):
+        return True
+
+    # Стратегия 4: клик по ссылке внутри строки (часто номер документа — <a>)
+    try:
+        links = row.find_elements(By.XPATH,
+            ".//a | .//*[contains(@class,'gwt-Anchor')] | .//*[contains(@class,'cellClickable')]")
+        for lnk in links:
+            if lnk.is_displayed():
+                try:
+                    driver.execute_script("arguments[0].click();", lnk)
+                except Exception:
+                    try:
+                        lnk.click()
+                    except Exception:
+                        continue
+                if _card_opened(driver, timeout=4):
+                    return True
+    except Exception as e:
+        log.debug(f"strat4 link-click err: {e}")
+
+    log.warning("Карточка не открылась — все 4 стратегии не сработали")
+    return False
 
 
 # ============================================================
