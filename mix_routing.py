@@ -483,23 +483,91 @@ def add_addressee(driver, person_name):
 
 # ================= REGISTRATION =================
 
+_ASUD_ID_RE = re.compile(
+    r'\b([А-Я]{2,5}/[А-Я0-9-]+(?:/[А-Я0-9-]+)+(?:/\d+))\b',
+    re.UNICODE)
+
+
+def _looks_like_asud_id(txt):
+    """Похоже на регистрационный номер документа?
+    Примеры: ОПТС/8/19892, ОРТС/СЗ/ТЭС-03-УПО-02/176, РИК/ОРТС/2026/11.
+    Должен содержать /, длиннее 5, и НЕ быть датой."""
+    if not txt:
+        return False
+    txt = txt.strip()
+    if '/' not in txt or len(txt) < 6:
+        return False
+    if re.match(r'^\d{2}\.\d{2}\.\d{4}', txt):
+        return False
+    return True
+
+
 def capture_asud_id(driver, timeout=15):
-    """Читает регистрационный номер из шапки карточки (data-marker='ScreenHeader1').
-    Возвращает 'ОПТС/8/19892' (или похожее) либо None."""
+    """Читает регистрационный номер документа после регистрации.
+
+    Три стратегии (по убыванию точности):
+      1. [data-marker='ScreenHeader1'] → первый <b>
+      2. //*[@data-marker='ScreenHeader1']//b — все <b> с матчем по паттерну
+      3. Любой <b> на странице с подходящим текстом + regex по тексту страницы
+
+    Возвращает строку 'ОПТС/8/19892' / 'ОРТС/СЗ/ТЭС-03-УПО-02/176' или None.
+    """
     end = time.monotonic() + timeout
+    last_dump = 0
     while time.monotonic() < end:
+        # Стратегия 1: ScreenHeader1 → первый <b>
         try:
             header = driver.find_element(By.CSS_SELECTOR,
                 "[data-marker='ScreenHeader1']")
             bolds = header.find_elements(By.CSS_SELECTOR, "b")
-            if bolds:
-                txt = (bolds[0].text or "").strip()
-                # Должно быть похоже на ID документа: что-то/что-то/...
-                if txt and '/' in txt and len(txt) > 5 and not re.match(r'^\d{2}\.\d{2}\.\d{4}', txt):
+            for b in bolds:
+                try:
+                    txt = (b.text or "").strip()
+                    if _looks_like_asud_id(txt):
+                        log.info(f"  asud_id [stratrgy 1: ScreenHeader1/b]: {txt!r}")
+                        return txt
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+        # Стратегия 2: явный XPath с фильтром по pattern
+        try:
+            for b in driver.find_elements(By.XPATH,
+                    "//*[@data-marker='ScreenHeader1']//b"):
+                txt = (b.text or "").strip()
+                if _looks_like_asud_id(txt):
+                    log.info(f"  asud_id [strategy 2: xpath]: {txt!r}")
                     return txt
         except Exception:
             pass
+
+        # Каждые ~3 сек выводим snapshot DOM для диагностики
+        if time.monotonic() - last_dump > 3:
+            last_dump = time.monotonic()
+            try:
+                headers = driver.find_elements(By.CSS_SELECTOR,
+                    "[data-marker='ScreenHeader1']")
+                log.info(f"  ждём asud_id... ScreenHeader1 элементов: {len(headers)}")
+                if headers:
+                    inner = (headers[0].text or "")[:200].replace('\n', ' | ')
+                    log.info(f"    содержимое: {inner!r}")
+            except Exception:
+                pass
+
         time.sleep(0.3)
+
+    # Стратегия 3 (last resort): regex по всему тексту страницы
+    try:
+        body_text = driver.find_element(By.TAG_NAME, "body").text
+        m = _ASUD_ID_RE.search(body_text)
+        if m:
+            log.info(f"  asud_id [strategy 3: regex page]: {m.group(1)!r}")
+            return m.group(1)
+    except Exception:
+        pass
+
+    log.warning("Регистрационный номер не захватили — пуст в output")
     return None
 
 
