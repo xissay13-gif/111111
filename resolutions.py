@@ -34,14 +34,32 @@ from ui import (click, wait_and_click, find_input_near_label,
                 wait_asud_loaded, wait_modal_closed, close_open_modals, js_set_value)
 from correspondent import match_correspondent
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    datefmt='%H:%M:%S',
-    handlers=[logging.StreamHandler()],
-)
+_log_console = logging.StreamHandler()
+_log_console.setLevel(logging.INFO)
+_log_console.setFormatter(logging.Formatter(
+    '%(asctime)s [%(levelname)s] %(message)s', datefmt='%H:%M:%S'))
+
+logging.basicConfig(level=logging.DEBUG, handlers=[_log_console])
 log = logging.getLogger("asud.res")
 start_time = time.monotonic()
+
+
+def _attach_file_logger(base_dir):
+    """Подключает FileHandler с DEBUG: <base_dir>/resolutions_<timestamp>.log."""
+    try:
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        path = os.path.join(base_dir, f"resolutions_{ts}.log")
+        fh = logging.FileHandler(path, encoding='utf-8')
+        fh.setLevel(logging.DEBUG)
+        fh.setFormatter(logging.Formatter(
+            '%(asctime)s.%(msecs)03d [%(levelname)s] %(name)s: %(message)s',
+            datefmt='%H:%M:%S'))
+        logging.getLogger().addHandler(fh)
+        log.info(f"Подробный лог пишется в: {path}")
+        return path
+    except Exception as e:
+        log.warning(f"Не удалось создать файл лога: {e}")
+        return None
 
 settings = {}
 
@@ -505,12 +523,17 @@ NUMBER_FILTER_CONTAINER_ID = "FCPC_Номер"
 
 def _set_filter_value(driver, container_id, input_id, value):
     """JS-ввод в фильтр колонки — без эмуляции клавиатуры (фон-friendly)."""
+    log.debug(f"_set_filter_value: ищу input id={input_id!r}")
+    inp = None
     try:
         inp = driver.find_element(By.ID, input_id)
+        log.debug(f"  input найден по ID")
     except Exception:
+        log.debug(f"  по ID не нашёл, пробую внутри container={container_id!r}")
         try:
             container = driver.find_element(By.ID, container_id)
             inp = container.find_element(By.CSS_SELECTOR, "input[type='text']")
+            log.debug(f"  input найден внутри container")
         except Exception as e:
             log.warning(f"Фильтр {container_id}: input не найден ({e})")
             return False
@@ -523,6 +546,7 @@ def _set_filter_value(driver, container_id, input_id, value):
             el.dispatchEvent(new Event('keyup', {bubbles:true}));
             el.dispatchEvent(new Event('change', {bubbles:true}));
         """, inp, value)
+        log.debug(f"  JS dispatch выполнен; value={value!r}")
         return True
     except Exception as e:
         log.warning(f"JS-ввод в фильтр упал: {e}")
@@ -552,37 +576,52 @@ def find_doc_row(driver, doc, timeout=8):
       2. Иначе — поиск по тексту (appeal_no / TextBody / Subject) как раньше
     """
     asud_id = doc.get('asud_id') or ''
+    log.debug(f"find_doc_row: asud_id={asud_id!r}, appeal_no={doc.get('appeal_no')!r}, "
+             f"timeout={timeout}s")
 
     # Главная стратегия: фильтр по точному номеру
     if asud_id:
+        log.info(f"[find] стратегия 1 (фильтр 'Номер'): {asud_id}")
         if filter_by_number(driver, asud_id):
+            log.debug(f"  фильтр введён, жду дебаунс 1.5s")
             time.sleep(1.5)  # дебаунс GWT-фильтра
             end = time.monotonic() + timeout
+            tick = 0
             while time.monotonic() < end:
+                tick += 1
                 try:
                     rows = driver.find_elements(By.XPATH,
                         f"//table[@id='{LIST_TABLE_ID}']//tbody/tr")
                     visible_rows = [r for r in rows if r.is_displayed()
                                     and (r.text or '').strip()]
+                    log.debug(f"  tick#{tick}: всего <tr>={len(rows)}, "
+                             f"видимых-с-текстом={len(visible_rows)}")
                     if visible_rows:
-                        log.info(f"  match по фильтру: {asud_id} ({len(visible_rows)} строк)")
+                        first_text = (visible_rows[0].text or '').replace('\n', ' ')[:80]
+                        log.info(f"[find] МАТЧ по фильтру: {asud_id} → {len(visible_rows)} строк")
+                        log.debug(f"  первая строка: {first_text!r}")
                         return visible_rows[0]
-                except Exception:
-                    pass
+                except Exception as e:
+                    log.debug(f"  tick#{tick}: исключение {e}")
                 time.sleep(0.5)
-            log.warning(f"  фильтр {asud_id} → 0 строк")
+            log.warning(f"[find] фильтр {asud_id} → 0 строк за {timeout}s")
             return None
+        else:
+            log.warning(f"[find] не получилось ввести фильтр для {asud_id}")
 
     # Fallback на текстовый поиск (без фильтра — сканируем что в DOM)
+    log.info(f"[find] стратегия 2 (fallback по тексту)")
     end = time.monotonic() + timeout
+    tick = 0
     while time.monotonic() < end:
+        tick += 1
         if doc.get('appeal_no'):
             try:
                 row = driver.find_element(By.XPATH,
                     f"//table[@id='{LIST_TABLE_ID}']"
                     f"//tr[contains(., '{doc['appeal_no']}')]")
                 if row.is_displayed():
-                    log.info(f"  match (fallback): appeal № {doc['appeal_no']}")
+                    log.info(f"[find] МАТЧ (fallback): appeal № {doc['appeal_no']}")
                     return row
             except Exception:
                 pass
@@ -594,11 +633,13 @@ def find_doc_row(driver, doc, timeout=8):
                     f"//table[@id='{LIST_TABLE_ID}']"
                     f"//tr[contains(., \"{snippet}\")]")
                 if row.is_displayed():
-                    log.info(f"  match (fallback): TextBody")
+                    log.info(f"[find] МАТЧ (fallback): TextBody {snippet!r}")
                     return row
             except Exception:
                 pass
+        log.debug(f"  fallback tick#{tick}: не нашёл")
         time.sleep(0.5)
+    log.warning(f"[find] не найдено ни одной стратегией за {timeout}s")
     return None
 
 
@@ -621,14 +662,17 @@ def _refresh_first_row(driver):
     try:
         rows = driver.find_elements(By.XPATH,
             f"//table[@id='{LIST_TABLE_ID}']//tbody/tr")
-        for r in rows:
+        log.debug(f"_refresh_first_row: всего <tr>={len(rows)}")
+        for idx, r in enumerate(rows):
             try:
                 if r.is_displayed() and (r.text or '').strip():
+                    log.debug(f"  → свежий ref на <tr>[{idx}]")
                     return r
             except Exception:
                 continue
-    except Exception:
-        pass
+        log.debug(f"  → ни одной видимой <tr> с текстом")
+    except Exception as e:
+        log.debug(f"  ошибка поиска <tr>: {e}")
     return None
 
 
@@ -636,20 +680,26 @@ def _meaningful_cell(row):
     """Берёт ячейку с текстом (subject/тип) — не чекбокс, не иконку."""
     try:
         tds = row.find_elements(By.XPATH, ".//td")
-    except Exception:
+    except Exception as e:
+        log.debug(f"_meaningful_cell: не нашёл <td>: {e}")
         return None
+    log.debug(f"_meaningful_cell: всего <td>={len(tds)}")
     best = None
-    for td in tds:
+    for idx, td in enumerate(tds):
         try:
             if not td.is_displayed():
                 continue
             txt = (td.text or '').strip()
+            w = td.size.get('width', 0)
             if len(txt) > 10:  # пропускаем чекбоксы/иконки
+                log.debug(f"  → выбрана <td>[{idx}] w={w} text={txt[:40]!r}")
                 return td
-            if best is None and td.size.get('width', 0) > 50:
+            if best is None and w > 50:
                 best = td
+                log.debug(f"  кандидат <td>[{idx}] w={w} (без текста)")
         except Exception:
             continue
+    log.debug(f"  → fallback на best={'найден' if best else 'нет'}")
     return best
 
 
@@ -661,41 +711,58 @@ def open_doc_card(driver, row):
     ActionChains.double_click по разным причинам часто не срабатывает,
     поэтому пробуем несколько стратегий по очереди.
     """
+    log.info("[open] начинаю открывать карточку документа")
     # Свежая ссылка — пред. могла стать stale
     fresh = _refresh_first_row(driver) or row
+    log.debug(f"[open] fresh={'свежая ссылка' if fresh is not row else 'та же что передали'}")
 
     try:
         driver.execute_script("arguments[0].scrollIntoView({block:'center'});", fresh)
         time.sleep(0.3)
-    except Exception:
-        pass
+        log.debug(f"[open] scrollIntoView OK")
+    except Exception as e:
+        log.debug(f"[open] scrollIntoView err: {e}")
 
     # Берём содержательную ячейку (Subject/Тип) — не чекбокс
     target_cell = _meaningful_cell(fresh) or fresh
+    log.debug(f"[open] target_cell={'<td>' if target_cell is not fresh else '<tr>'}")
 
     # ── Стратегия 1: single click + Enter (самый надёжный для GXT)
+    log.info("[open] strat1: single click + Enter")
     try:
         ActionChains(driver).move_to_element(target_cell).pause(0.15).click().perform()
+        log.debug(f"  click выполнен")
+        try:
+            cls = (fresh.get_attribute('class') or '')
+            log.debug(f"  class у <tr> после клика: {cls!r}")
+        except Exception:
+            pass
         time.sleep(0.4)
         ActionChains(driver).send_keys(Keys.ENTER).perform()
+        log.debug(f"  Enter отправлен")
     except Exception as e:
-        log.debug(f"strat1 click+Enter err: {e}")
+        log.debug(f"  strat1 err: {e}")
     if _card_opened(driver, timeout=5):
-        log.info("  карточка открыта: click + Enter")
+        log.info("[open] УСПЕХ: strat1 click + Enter")
         return True
+    log.info("[open] strat1 не сработал, пробую strat2")
 
     # ── Стратегия 2: ActionChains double-click по содержательной ячейке
+    log.info("[open] strat2: ActionChains dblclick по <td>")
     try:
         fresh2 = _refresh_first_row(driver) or fresh
         cell2 = _meaningful_cell(fresh2) or fresh2
         ActionChains(driver).move_to_element(cell2).pause(0.2).double_click().perform()
+        log.debug(f"  double_click выполнен")
     except Exception as e:
-        log.debug(f"strat2 dblclick<td> err: {e}")
+        log.debug(f"  strat2 err: {e}")
     if _card_opened(driver, timeout=4):
-        log.info("  карточка открыта: ActionChains dblclick")
+        log.info("[open] УСПЕХ: strat2 ActionChains dblclick")
         return True
+    log.info("[open] strat2 не сработал, пробую strat3")
 
     # ── Стратегия 3: JS — полная mouse-event цепочка (mousedown/up/click x2 + dblclick)
+    log.info("[open] strat3: JS mouse-event chain")
     try:
         fresh3 = _refresh_first_row(driver) or fresh
         cell3 = _meaningful_cell(fresh3) or fresh3
@@ -713,19 +780,24 @@ def open_doc_card(driver, row):
             }
             el.dispatchEvent(new MouseEvent('dblclick', {...opts, detail:2}));
         """, cell3)
+        log.debug(f"  JS event chain dispatched")
     except Exception as e:
-        log.debug(f"strat3 js-event-chain err: {e}")
+        log.debug(f"  strat3 err: {e}")
     if _card_opened(driver, timeout=4):
-        log.info("  карточка открыта: JS event chain")
+        log.info("[open] УСПЕХ: strat3 JS event chain")
         return True
+    log.info("[open] strat3 не сработал, пробую strat4")
 
     # ── Стратегия 4: клик по ссылке/anchor если есть
+    log.info("[open] strat4: click по <a>/anchor внутри строки")
     try:
         fresh4 = _refresh_first_row(driver) or fresh
         links = fresh4.find_elements(By.XPATH,
             ".//a | .//*[contains(@class,'gwt-Anchor')] | .//*[contains(@class,'cellClickable')]")
-        for lnk in links:
+        log.debug(f"  найдено anchor/link={len(links)}")
+        for idx, lnk in enumerate(links):
             if lnk.is_displayed():
+                log.debug(f"  кликаю anchor[{idx}] tag={lnk.tag_name}")
                 try:
                     driver.execute_script("arguments[0].click();", lnk)
                 except Exception:
@@ -734,12 +806,12 @@ def open_doc_card(driver, row):
                     except Exception:
                         continue
                 if _card_opened(driver, timeout=4):
-                    log.info("  карточка открыта: link-click")
+                    log.info(f"[open] УСПЕХ: strat4 link-click anchor[{idx}]")
                     return True
     except Exception as e:
-        log.debug(f"strat4 link-click err: {e}")
+        log.debug(f"  strat4 err: {e}")
 
-    log.warning("Карточка не открылась — все 4 стратегии не сработали")
+    log.warning("[open] ПРОВАЛ: все 4 стратегии не сработали")
     return False
 
 
@@ -1014,15 +1086,19 @@ def _click_confirm_yes(driver, timeout=10):
 
 def submit_resolution(driver):
     """Финальный шаг: 'Сохранить и отправить' → confirm 'Да' → закрыть карточку."""
+    log.debug("[submit] жду активации 'Сохранить и отправить' (id=save_and_send_btn)")
     btn = _wait_button_enabled(driver, "save_and_send_btn", timeout=15)
     if not btn:
         log.error("Кнопка 'Сохранить и отправить' не активировалась")
         return False
+    log.info("[submit] клик 'Сохранить и отправить'")
     click(driver, btn, "Сохранить и отправить")
     time.sleep(2)
 
     # Подтверждение отправки адресатам
-    _click_confirm_yes(driver, timeout=10)
+    log.info("[submit] жду confirm-диалог 'Да'")
+    confirmed = _click_confirm_yes(driver, timeout=10)
+    log.info(f"[submit] confirm 'Да': {'OK' if confirmed else 'не появился'}")
     time.sleep(2)
 
     # Может остаться открытой карточка документа — её закрываем отдельно
@@ -1032,11 +1108,13 @@ def submit_resolution(driver):
         title = driver.find_element(By.XPATH,
             "//*[contains(text(),'Корневая резолюция')]")
         if title.is_displayed():
-            log.warning("Модалка 'Корневая резолюция' не закрылась — крестик")
+            log.warning("[submit] модалка 'Корневая резолюция' ещё открыта — крестик")
             close_open_modals(driver)
             time.sleep(1)
+        else:
+            log.debug("[submit] модалка 'Корневая резолюция' закрылась штатно")
     except Exception:
-        pass
+        log.debug("[submit] модалка 'Корневая резолюция' уже не в DOM")
     return True
 
 
@@ -1047,7 +1125,7 @@ def close_card_after_resolution(driver):
     try:
         close_btn = driver.find_element(By.ID, "header-close-btn")
         if close_btn.is_displayed():
-            # Тот же набор стратегий что в основных скриптах
+            log.debug("[close] header-close-btn найден и видим")
             try:
                 driver.execute_script("arguments[0].scrollIntoView({block:'center'});", close_btn)
                 time.sleep(0.3)
@@ -1056,21 +1134,24 @@ def close_card_after_resolution(driver):
             try:
                 ActionChains(driver).move_to_element(close_btn).pause(0.3).click().perform()
                 closed = True
-            except Exception:
-                pass
+                log.info("[close] карточка закрыта (ActionChains)")
+            except Exception as e:
+                log.debug(f"[close] ActionChains err: {e}")
             if not closed:
                 try:
                     driver.execute_script("arguments[0].click();", close_btn)
                     closed = True
-                except Exception:
-                    pass
+                    log.info("[close] карточка закрыта (JS click)")
+                except Exception as e:
+                    log.debug(f"[close] JS click err: {e}")
             if closed:
                 time.sleep(2)
-                log.info("Карточка закрыта")
                 return
-    except Exception:
-        pass
-    log.info("Карточка уже закрыта или header-close-btn не найден")
+        else:
+            log.debug("[close] header-close-btn не видим")
+    except Exception as e:
+        log.debug(f"[close] header-close-btn не найден: {e}")
+    log.info("[close] карточка уже закрыта или header-close-btn не найден")
 
 
 # ============================================================
@@ -1079,58 +1160,77 @@ def close_card_after_resolution(driver):
 
 def process_one(driver, doc, index, total):
     """Обработка одной строки реестра: найти, открыть, выдать резолюцию, закрыть."""
+    t_start = time.monotonic()
     log.info("=" * 50)
     log.info(f"ДОКУМЕНТ {index}/{total}: link={doc.get('link')!r}, "
              f"appeal_no={doc.get('appeal_no')}, "
              f"исполнитель={doc.get('executor')}")
+    log.debug(f"  доп: asud_id={doc.get('asud_id')!r}, ao={doc.get('ao')!r}, "
+             f"row_idx={doc.get('row_idx')}")
 
     if not doc.get('executor'):
         log.warning(f"Row {doc['row_idx']}: исполнитель не определён → пропускаю")
         return False
 
     # 1. Найти строку в списке
+    log.info(f"--- ШАГ 1/12: поиск документа в списке ---")
     row = find_doc_row(driver, doc, timeout=10)
     if not row:
         log.warning(f"Row {doc['row_idx']}: документ в списке не найден → пропускаю")
         return False
+    log.debug(f"  Шаг 1 OK ({time.monotonic()-t_start:.1f}s)")
 
     # 2. Открыть карточку
+    log.info(f"--- ШАГ 2/12: открыть карточку ---")
     if not open_doc_card(driver, row):
         return False
+    log.debug(f"  Шаг 2 OK ({time.monotonic()-t_start:.1f}s)")
 
     # 3. Создать резолюцию
+    log.info(f"--- ШАГ 3/12: кнопка 'Создать резолюцию' ---")
     try:
         btn = driver.find_element(By.ID, "header-action-btn-add_resolution")
         click(driver, btn, "Создать резолюцию")
         time.sleep(2)
+        log.debug(f"  Шаг 3 OK ({time.monotonic()-t_start:.1f}s)")
     except Exception as e:
         log.error(f"Кнопка 'Создать резолюцию' не найдена: {e}")
         return False
 
     # 4. Содержание
+    log.info(f"--- ШАГ 4/12: выбор шаблона 'Содержание' ---")
     select_content_template(driver,
         settings.get("resolution_content", cfg.DEFAULTS["resolution_content"]))
+    log.debug(f"  Шаг 4 OK ({time.monotonic()-t_start:.1f}s)")
 
     # 5. Тоггл "Требуется отчёт"
     if settings.get("require_report", True):
+        log.info(f"--- ШАГ 5/12: тоггл 'Требуется отчёт' ---")
         toggle_switch(driver, "Требуется отчёт", "true")
+        log.debug(f"  Шаг 5 OK ({time.monotonic()-t_start:.1f}s)")
 
     # 6. Тоггл "Контрольная резолюция"
     if settings.get("control_resolution", True):
+        log.info(f"--- ШАГ 6/12: тоггл 'Контрольная резолюция' ---")
         toggle_switch(driver, "Контрольная резолюция", "true")
         time.sleep(0.5)
         # 7. Дата контрольного этапа
+        log.info(f"--- ШАГ 7/12: дата контрольного этапа ---")
         set_stage_date(driver,
             settings.get("workdays", cfg.DEFAULTS["workdays"]))
+        log.debug(f"  Шаги 6-7 OK ({time.monotonic()-t_start:.1f}s)")
 
     # 8. Исполнитель
+    log.info(f"--- ШАГ 8/12: исполнитель = {doc['executor']} ---")
     if not fill_executor(driver, doc['executor']):
         log.error(f"Row {doc['row_idx']}: не получилось ввести исполнителя")
         # Закроем диалог чтобы продолжить — но НЕ сохраним
         close_open_modals(driver)
         return False
+    log.debug(f"  Шаг 8 OK ({time.monotonic()-t_start:.1f}s)")
 
     # 9. Клик "Добавить"
+    log.info(f"--- ШАГ 9/12: кнопка 'Добавить' ---")
     add_btn = _wait_button_enabled(driver, "add_btn", timeout=10)
     if not add_btn:
         log.error("Кнопка 'Добавить' не активировалась")
@@ -1138,17 +1238,25 @@ def process_one(driver, doc, index, total):
         return False
     click(driver, add_btn, "Добавить")
     time.sleep(1.5)
+    log.debug(f"  Шаг 9 OK ({time.monotonic()-t_start:.1f}s)")
 
     # 10. Клик "Сохранить и отправить"
+    log.info(f"--- ШАГ 10/12: 'Сохранить и отправить' + confirm ---")
     if not submit_resolution(driver):
         log.error("Не удалось сохранить и отправить")
         return False
+    log.debug(f"  Шаг 10 OK ({time.monotonic()-t_start:.1f}s)")
 
     # 11. Закрыть карточку (если осталась открыта)
+    log.info(f"--- ШАГ 11/12: закрытие карточки ---")
     close_card_after_resolution(driver)
+    log.debug(f"  Шаг 11 OK ({time.monotonic()-t_start:.1f}s)")
+
     # 12. Очистить фильтр для следующей итерации
+    log.info(f"--- ШАГ 12/12: очистка фильтра ---")
     clear_filter(driver)
-    log.info(f"Документ {index}/{total} ОБРАБОТАН")
+    log.debug(f"  Шаг 12 OK")
+    log.info(f"ДОКУМЕНТ {index}/{total} ОБРАБОТАН за {time.monotonic()-t_start:.1f}s")
     return True
 
 
@@ -1273,7 +1381,9 @@ def main():
     log.info("=" * 50)
 
     base_dir = cfg.get_base_dir()
+    _attach_file_logger(base_dir)
     excel_path = _choose_xlsx(base_dir)
+    log.info(f"Реестр: {excel_path}")
 
     docs = load_excel(excel_path)
     if not docs:
