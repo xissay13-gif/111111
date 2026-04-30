@@ -404,7 +404,6 @@ def switch_account(driver, target_substring):
     2. Клик по пункту с нужным ФИО в выпадашке
     """
     log.info(f"Переключение на учётку: {target_substring}")
-    time.sleep(2)
 
     # Шаг 1: клик ▼ рядом с именем профиля
     try:
@@ -443,7 +442,7 @@ def switch_account(driver, target_substring):
             log.error("Не нашёл dropdown-стрелку профиля")
             return False
         click(driver, candidate, "▼ профиль")
-        time.sleep(1.5)
+        # Ниже WebDriverWait сам ждёт появления пункта с target_substring
     except Exception as e:
         log.error(f"Ошибка клика по dropdown профиля: {e}")
         return False
@@ -479,7 +478,6 @@ def switch_account(driver, target_substring):
         return False
 
     click(driver, target, f"учётка {target_substring}")
-    time.sleep(3)
     log.info("Переключение запущено, жду перезагрузку АСУД")
     _wait_profile_loaded(driver)
     return True
@@ -506,7 +504,12 @@ def click_sidebar_section(driver, section_text):
         log.error(f"Пункт сайдбара '{section_text}' не найден")
         return False
     click(driver, target, f"сайдбар: {section_text}")
-    time.sleep(2)
+    # Ждём появления первой строки данных в гриде вместо фиксированного sleep
+    try:
+        WebDriverWait(driver, 10).until(
+            lambda d: len(d.find_elements(By.XPATH, DATA_ROW_XPATH)) > 0)
+    except Exception:
+        log.debug("Грид пустой за 10s — может быть нормально (нет задач)")
     return True
 
 
@@ -877,7 +880,13 @@ def select_content_template(driver, template_text):
             return False
 
         click(driver, inp, "Содержание")
-        time.sleep(1)
+        # Ждём появления нужного пункта в дропдауне
+        try:
+            WebDriverWait(driver, 5).until(
+                lambda d: any(it.is_displayed() for it in d.find_elements(
+                    By.XPATH, f"//*[normalize-space(text())='{template_text}']")))
+        except Exception:
+            log.debug("Дропдаун не появился за 5s")
 
         # Дропдаун с пунктами
         items = driver.find_elements(By.XPATH,
@@ -939,29 +948,30 @@ def fill_executor(driver, fio):
 
         surname = fio.split()[0]
         inp.click()
-        time.sleep(0.3)
         inp.clear()
-        time.sleep(0.3)
         for ch in surname:
             inp.send_keys(ch)
-            time.sleep(0.08)
         log.info(f"Введена фамилия: {surname}")
-        time.sleep(2)
 
-        # Кандидаты в выпадашке
-        results = driver.find_elements(By.XPATH,
-            f"//*[contains(text(),'{surname}')]")
-        candidates = [r for r in results
-                      if r.is_displayed() and r != inp
-                      and r.tag_name.lower() != 'input']
-        if not candidates:
-            inp.send_keys(Keys.ENTER)
-            time.sleep(2)
+        # Кандидаты в выпадашке — ждём появления, не фикс. sleep
+        def _candidates():
             results = driver.find_elements(By.XPATH,
                 f"//*[contains(text(),'{surname}')]")
-            candidates = [r for r in results
-                          if r.is_displayed() and r != inp
-                          and r.tag_name.lower() != 'input']
+            return [r for r in results
+                    if r.is_displayed() and r != inp
+                    and r.tag_name.lower() != 'input']
+
+        candidates = []
+        try:
+            WebDriverWait(driver, 5).until(lambda d: len(_candidates()) > 0)
+            candidates = _candidates()
+        except Exception:
+            try:
+                inp.send_keys(Keys.ENTER)
+                WebDriverWait(driver, 3).until(lambda d: len(_candidates()) > 0)
+                candidates = _candidates()
+            except Exception:
+                pass
 
         log.info(f"Кандидатов: {len(candidates)}")
         target = None
@@ -983,9 +993,7 @@ def fill_executor(driver, fio):
             return False
 
         driver.execute_script("arguments[0].scrollIntoView({block:'center'});", target)
-        time.sleep(0.3)
-        ActionChains(driver).move_to_element(target).pause(0.3).click().perform()
-        time.sleep(1)
+        ActionChains(driver).move_to_element(target).pause(0.2).click().perform()
         log.info(f"Исполнитель выбран: {fio}")
         return True
     except Exception as e:
@@ -1082,7 +1090,11 @@ def _click_confirm_yes(driver, timeout=10):
             ActionChains(driver).send_keys(Keys.ENTER).perform()
         except Exception:
             pass
-    time.sleep(2)
+        # Ждём пока confirm-кнопка исчезнет (диалог закрылся)
+        try:
+            WebDriverWait(driver, 5).until_not(EC.visibility_of(yes_btn))
+        except Exception:
+            pass
     return clicked
 
 
@@ -1095,65 +1107,67 @@ def submit_resolution(driver):
         return False
     log.info("[submit] клик 'Сохранить и отправить'")
     click(driver, btn, "Сохранить и отправить")
-    time.sleep(2)
 
-    # Подтверждение отправки адресатам
+    # Подтверждение отправки адресатам — _click_confirm_yes сам поллит появление
     log.info("[submit] жду confirm-диалог 'Да'")
     confirmed = _click_confirm_yes(driver, timeout=10)
     log.info(f"[submit] confirm 'Да': {'OK' if confirmed else 'не появился'}")
-    time.sleep(2)
 
-    # Может остаться открытой карточка документа — её закрываем отдельно
-    # в close_card_after_resolution. На случай если "Корневая резолюция"
-    # ещё открыта — закроем её через крестик в модалке.
+    # Ждём пока модалка "Корневая резолюция" уйдёт из DOM (или станет невидимой)
     try:
-        title = driver.find_element(By.XPATH,
-            "//*[contains(text(),'Корневая резолюция')]")
-        if title.is_displayed():
-            log.warning("[submit] модалка 'Корневая резолюция' ещё открыта — крестик")
-            close_open_modals(driver)
-            time.sleep(1)
-        else:
-            log.debug("[submit] модалка 'Корневая резолюция' закрылась штатно")
+        WebDriverWait(driver, 5).until_not(
+            lambda d: any(t.is_displayed() for t in d.find_elements(
+                By.XPATH, "//*[contains(text(),'Корневая резолюция')]")))
+        log.debug("[submit] модалка 'Корневая резолюция' закрылась штатно")
     except Exception:
-        log.debug("[submit] модалка 'Корневая резолюция' уже не в DOM")
+        log.warning("[submit] модалка 'Корневая резолюция' ещё открыта — крестик")
+        close_open_modals(driver)
     return True
 
 
 def close_card_after_resolution(driver):
     """После выдачи резолюции возвращаемся в список через #header-close-btn."""
-    time.sleep(2)
+    # Ждём пока header-close-btn появится (карточка всё ещё открыта) —
+    # без фикс. sleep(2). Если не появится — карточка уже закрыта.
+    close_btn = None
+    try:
+        close_btn = WebDriverWait(driver, 5).until(
+            EC.presence_of_element_located((By.ID, "header-close-btn")))
+    except Exception:
+        log.info("[close] карточка уже закрыта (header-close-btn не появился)")
+        return
+
+    if not close_btn.is_displayed():
+        log.info("[close] header-close-btn не видим — карточка уже закрыта")
+        return
+
+    log.debug("[close] header-close-btn найден")
+    try:
+        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", close_btn)
+    except Exception:
+        pass
     closed = False
     try:
-        close_btn = driver.find_element(By.ID, "header-close-btn")
-        if close_btn.is_displayed():
-            log.debug("[close] header-close-btn найден и видим")
-            try:
-                driver.execute_script("arguments[0].scrollIntoView({block:'center'});", close_btn)
-                time.sleep(0.3)
-            except Exception:
-                pass
-            try:
-                ActionChains(driver).move_to_element(close_btn).pause(0.3).click().perform()
-                closed = True
-                log.info("[close] карточка закрыта (ActionChains)")
-            except Exception as e:
-                log.debug(f"[close] ActionChains err: {e}")
-            if not closed:
-                try:
-                    driver.execute_script("arguments[0].click();", close_btn)
-                    closed = True
-                    log.info("[close] карточка закрыта (JS click)")
-                except Exception as e:
-                    log.debug(f"[close] JS click err: {e}")
-            if closed:
-                time.sleep(2)
-                return
-        else:
-            log.debug("[close] header-close-btn не видим")
+        ActionChains(driver).move_to_element(close_btn).pause(0.2).click().perform()
+        closed = True
+        log.info("[close] карточка закрыта (ActionChains)")
     except Exception as e:
-        log.debug(f"[close] header-close-btn не найден: {e}")
-    log.info("[close] карточка уже закрыта или header-close-btn не найден")
+        log.debug(f"[close] ActionChains err: {e}")
+    if not closed:
+        try:
+            driver.execute_script("arguments[0].click();", close_btn)
+            closed = True
+            log.info("[close] карточка закрыта (JS click)")
+        except Exception as e:
+            log.debug(f"[close] JS click err: {e}")
+
+    # Ждём возврата в главную (mainscreen-create-button становится кликабельной)
+    if closed:
+        try:
+            WebDriverWait(driver, 10).until(
+                EC.element_to_be_clickable((By.ID, "mainscreen-create-button")))
+        except Exception:
+            log.debug("[close] главная не загрузилась за 10s")
 
 
 # ============================================================
@@ -1193,7 +1207,12 @@ def process_one(driver, doc, index, total):
     try:
         btn = driver.find_element(By.ID, "header-action-btn-add_resolution")
         click(driver, btn, "Создать резолюцию")
-        time.sleep(2)
+        # Ждём появления поля "Содержание" — признак что модалка открылась
+        try:
+            WebDriverWait(driver, 10).until(EC.presence_of_element_located((
+                By.CSS_SELECTOR, "input[placeholder='Общие формулировки']")))
+        except Exception:
+            log.debug("Поле 'Содержание' не появилось за 10s")
         log.debug(f"  Шаг 3 OK ({time.monotonic()-t_start:.1f}s)")
     except Exception as e:
         log.error(f"Кнопка 'Создать резолюцию' не найдена: {e}")
@@ -1239,7 +1258,7 @@ def process_one(driver, doc, index, total):
         close_open_modals(driver)
         return False
     click(driver, add_btn, "Добавить")
-    time.sleep(1.5)
+    # Ждём активации save_and_send_btn — её ждёт следом submit_resolution
     log.debug(f"  Шаг 9 OK ({time.monotonic()-t_start:.1f}s)")
 
     # 10. Клик "Сохранить и отправить"
@@ -1347,7 +1366,6 @@ def _wait_profile_loaded(driver, max_wait=120):
         log.info("АСУД готов")
     except Exception:
         log.warning("Кнопка 'Создать документ' не появилась — продолжаю")
-    time.sleep(1)
 
 
 def _go_to_asud(driver, url, attached):
@@ -1419,10 +1437,9 @@ def main():
             input("Enter...")
             return
 
-        # Сайдбар → "На резолюцию"
+        # Сайдбар → "На резолюцию" (внутри уже ждёт появления грида)
         click_sidebar_section(driver,
             settings.get("sidebar_section", cfg.DEFAULTS["sidebar_section"]))
-        time.sleep(2)
 
         done, err, skip = 0, 0, 0
         for i, doc in enumerate(docs, 1):
@@ -1443,7 +1460,6 @@ def main():
                         settings.get("target_account", cfg.DEFAULTS["target_account"]))
                     click_sidebar_section(driver,
                         settings.get("sidebar_section", cfg.DEFAULTS["sidebar_section"]))
-                    time.sleep(2)
                 except Exception:
                     pass
 
