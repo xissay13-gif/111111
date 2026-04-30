@@ -484,7 +484,7 @@ def add_addressee(driver, person_name):
 # ================= REGISTRATION =================
 
 _ASUD_ID_RE = re.compile(
-    r'\b([А-Я]{2,5}/[А-Я0-9-]+(?:/[А-Я0-9-]+)+(?:/\d+))\b',
+    r'\b([А-Я]{2,5}(?:/[А-Я0-9.-]+){2,})\b',
     re.UNICODE)
 
 
