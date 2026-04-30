@@ -261,64 +261,49 @@ def _looks_like_asud_id(txt):
 
 def capture_asud_id(driver, timeout=15):
     """Читает регистрационный номер документа после регистрации.
-    Главное место — headerInfoContainer (там '№ ОРТС/8/23768')."""
+    3 стратегии (ScreenHeader1/<b>; XPath с фильтром; regex по странице)."""
     end = time.monotonic() + timeout
     last_dump = 0
     while time.monotonic() < end:
-        # 1. headerInfoContainer
         try:
-            for cont in driver.find_elements(By.CSS_SELECTOR,
-                    "[class*='headerInfoContainer']"):
-                for b in cont.find_elements(By.CSS_SELECTOR, "b"):
-                    txt = (b.text or "").strip()
-                    if _looks_like_asud_id(txt):
-                        log.info(f"  asud_id [s1 headerInfoContainer]: {txt!r}")
-                        return txt
-        except Exception:
-            pass
-        # 2. ScreenHeader1
-        try:
-            for cont in driver.find_elements(By.CSS_SELECTOR,
-                    "[data-marker='ScreenHeader1']"):
-                for b in cont.find_elements(By.CSS_SELECTOR, "b"):
-                    txt = (b.text or "").strip()
-                    if _looks_like_asud_id(txt):
-                        log.info(f"  asud_id [s2 ScreenHeader1]: {txt!r}")
-                        return txt
-        except Exception:
-            pass
-        # 3. любой <b>
-        try:
-            for b in driver.find_elements(By.TAG_NAME, "b"):
+            header = driver.find_element(By.CSS_SELECTOR,
+                "[data-marker='ScreenHeader1']")
+            for b in header.find_elements(By.CSS_SELECTOR, "b"):
                 try:
                     txt = (b.text or "").strip()
                     if _looks_like_asud_id(txt):
-                        log.info(f"  asud_id [s3 any-b]: {txt!r}")
+                        log.info(f"  asud_id [s1]: {txt!r}")
                         return txt
                 except Exception:
                     continue
         except Exception:
             pass
+        try:
+            for b in driver.find_elements(By.XPATH,
+                    "//*[@data-marker='ScreenHeader1']//b"):
+                txt = (b.text or "").strip()
+                if _looks_like_asud_id(txt):
+                    log.info(f"  asud_id [s2]: {txt!r}")
+                    return txt
+        except Exception:
+            pass
         if time.monotonic() - last_dump > 3:
             last_dump = time.monotonic()
             try:
-                cont = driver.find_elements(By.CSS_SELECTOR,
-                    "[class*='headerInfoContainer']")
-                hdr = driver.find_elements(By.CSS_SELECTOR,
+                headers = driver.find_elements(By.CSS_SELECTOR,
                     "[data-marker='ScreenHeader1']")
-                log.info(f"  ждём asud_id... headerInfo:{len(cont)} screenHdr:{len(hdr)}")
-                if cont:
-                    inner = (cont[0].text or "")[:200].replace('\n', ' | ')
-                    log.info(f"    headerInfo: {inner!r}")
+                log.info(f"  ждём asud_id... ScreenHeader1: {len(headers)}")
+                if headers:
+                    inner = (headers[0].text or "")[:200].replace('\n', ' | ')
+                    log.info(f"    содержимое: {inner!r}")
             except Exception:
                 pass
         time.sleep(0.3)
-    # 4. regex по тексту body
     try:
         body_text = driver.find_element(By.TAG_NAME, "body").text
         m = _ASUD_ID_RE.search(body_text)
         if m:
-            log.info(f"  asud_id [s4 regex]: {m.group(1)!r}")
+            log.info(f"  asud_id [s3 regex]: {m.group(1)!r}")
             return m.group(1)
     except Exception:
         pass
