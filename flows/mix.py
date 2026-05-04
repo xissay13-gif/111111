@@ -514,7 +514,8 @@ def capture_asud_id(driver, timeout=15):
 
 def _wait_button_enabled(driver, css_selector, timeout=20):
     """Ждёт пока кнопка станет clickable (data-disabled != '1', visible).
-    После attach АСУД на 1-3s держит register-кнопку в disabled пока обрабатывает upload."""
+    После attach АСУД на 1-3s держит register-кнопку в disabled пока обрабатывает upload.
+    Поллинг 100ms — чтобы поймать переход disabled→enabled с минимальной задержкой."""
     end = time.monotonic() + timeout
     last_state = None
     while time.monotonic() < end:
@@ -530,7 +531,7 @@ def _wait_button_enabled(driver, css_selector, timeout=20):
             if last_state != 'missing':
                 log.debug(f"  кнопка ещё не в DOM ({e})")
                 last_state = 'missing'
-        time.sleep(0.3)
+        time.sleep(0.1)
     return None
 
 
@@ -560,10 +561,11 @@ def register_and_resolve(driver, index, total):
         return None
 
     # Ждём появления "На резолюцию" — это маркер что регистрация прошла
-    # (asud_id появляется одновременно — захватим следом)
+    # (asud_id появляется одновременно — захватим следом).
+    # poll_frequency=0.1 — детектим за 100ms вместо дефолтных 500ms.
     res_btn = None
     try:
-        res_btn = WebDriverWait(driver, 15).until(
+        res_btn = WebDriverWait(driver, 15, poll_frequency=0.1).until(
             EC.presence_of_element_located((By.ID, "header-action-btn-send_on_resolution")))
     except Exception:
         try:
