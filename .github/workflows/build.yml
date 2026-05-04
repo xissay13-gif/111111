@@ -1,4 +1,4 @@
-name: Build EXE
+name: Build АСУД EXE
 
 on:
   push:
@@ -18,21 +18,33 @@ jobs:
         python-version: '3.12'
 
     - name: Install dependencies
-      run: pip install selenium pyinstaller
+      run: pip install selenium openpyxl pyinstaller pyautogui pywinauto
 
     - name: Build EXE
       run: >
-        pyinstaller --onefile --name asud_create_doc
+        pyinstaller --onefile --name asud
+        --add-data "addresses.csv;."
         --hidden-import=selenium.webdriver.edge.webdriver
         --hidden-import=selenium.webdriver.edge.service
         --hidden-import=selenium.webdriver.edge.options
         --hidden-import=selenium.webdriver.common.action_chains
         --hidden-import=selenium.webdriver.support.ui
         --hidden-import=selenium.webdriver.support.expected_conditions
-        asud_create_doc.py
+        --hidden-import=openpyxl
+        --hidden-import=pyautogui
+        --hidden-import=pywinauto
+        --hidden-import=shared.config
+        --hidden-import=shared.ui
+        --hidden-import=shared.correspondent
+        --hidden-import=shared.attachments
+        --hidden-import=shared.okrug_parser
+        --hidden-import=flows.mix
+        --hidden-import=flows.auto_create
+        --hidden-import=flows.resolutions
+        app.py
 
     - name: Upload EXE
       uses: actions/upload-artifact@v4
       with:
-        name: asud_create_doc
-        path: dist/asud_create_doc.exe
+        name: asud
+        path: dist/asud.exe
