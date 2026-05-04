@@ -576,8 +576,9 @@ def register_and_resolve(driver, index, total):
         except Exception:
             pass
 
-    # DOM готов — asud_id ловится за 100-200ms
-    asud_id = capture_asud_id(driver, timeout=3)
+    # DOM готов — asud_id обычно ловится за 100-200ms;
+    # 500ms — компромисс: успеваем поймать в норме, не тормозим если не успели
+    asud_id = capture_asud_id(driver, timeout=0.5)
     if asud_id:
         log.info(f"Документ {index}/{total} ЗАРЕГИСТРИРОВАН: {asud_id}")
     else:
