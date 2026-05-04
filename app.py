@@ -40,6 +40,14 @@ logging.basicConfig(
 log = logging.getLogger("asud.app")
 
 
+_MODE_DESCRIPTIONS = {
+    'mix':         'Создание + регистрация + На резолюцию + .msg по Link',
+    'auto-create': 'Создание + регистрация + На резолюцию (без .msg)',
+    'smart':       'Создание как черновик + .msg (без регистрации, фикс. корреспондент)',
+}
+_MODES = ['mix', 'auto-create', 'smart']
+
+
 def detect_mode(xlsx_path):
     """Определяет режим по структуре xlsx (mix или auto-create)."""
     try:
@@ -59,6 +67,25 @@ def detect_mode(xlsx_path):
         log.warning(f"Не удалось прочитать {xlsx_path} для auto-detect: {e}")
 
     return 'auto-create'
+
+
+def pick_mode(xlsx_path):
+    """Интерактивный выбор режима с подсказкой auto-detect."""
+    auto = detect_mode(xlsx_path)
+    print(f"\nРеестр: {os.path.basename(xlsx_path)}")
+    print("Какой процесс запустить?")
+    for i, m in enumerate(_MODES, 1):
+        marker = '  ← рекомендую (auto-detect)' if m == auto else ''
+        print(f"  {i}. {m:11} — {_MODE_DESCRIPTIONS[m]}{marker}")
+    print(f"\n[Enter] = {auto}  (рекомендуется по реестру)")
+    choice = input("Номер режима (1-3) или Enter: ").strip()
+    if not choice:
+        return auto
+    try:
+        return _MODES[int(choice) - 1]
+    except (ValueError, IndexError):
+        log.warning(f"Неверный выбор '{choice}' — использую {auto}")
+        return auto
 
 
 def main():
@@ -95,9 +122,13 @@ def main():
             log.error(f"Не нашёл .xlsx в {base_dir}")
             sys.exit(1)
 
-    # Определяем режим
-    mode = args.mode or detect_mode(xlsx_path)
-    log.info(f"Режим: {mode}  (xlsx: {os.path.basename(xlsx_path)})")
+    # Определяем режим: явный флаг → интерактивный выбор → auto-detect
+    if args.mode:
+        mode = args.mode
+        log.info(f"Режим: {mode} (через --mode)")
+    else:
+        mode = pick_mode(xlsx_path)
+        log.info(f"Режим выбран: {mode}")
 
     # Запуск соответствующего flow
     if mode == 'mix':
@@ -111,8 +142,10 @@ def main():
         sys.exit(1)
 
     # Каждый flow.main() сам читает xlsx — передаём через env-переменную
-    # (минимальный contract без переписывания main каждого flow)
+    # (минимальный contract без переписывания main каждого flow).
+    # ASUD_MODE передаём для отображения в превью flow'а.
     os.environ['ASUD_XLSX'] = xlsx_path
+    os.environ['ASUD_MODE'] = mode
     flow_main()
 
 

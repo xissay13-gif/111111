@@ -417,7 +417,10 @@ def main():
     print(f"\nПервые 5:")
     for i, d in enumerate(docs[:5], 1):
         print(f"  {i}. [{d['тип_индекс']}] {d['тема'][:50]}...")
-    print(f"\nВсего: {len(docs)}  (корреспондент = {docs[0]['корреспондент']})")
+    mode_label = os.environ.get('ASUD_MODE', 'smart')
+    print(f"\nВсего: {len(docs)}  •  режим: {mode_label.upper()}")
+    print(f"smart: создание ЧЕРНОВИКА + .msg (без регистрации)")
+    print(f"корреспондент = {docs[0]['корреспондент']}")
     if input("Начать? (да/нет): ").strip().lower() not in ("да", "д", "y", "yes", ""):
         sys.exit(0)
 

@@ -864,7 +864,9 @@ def main():
     for i, d in enumerate(docs[:5], 1):
         flag = 'OK' if d["корр_найден"] else '!!'
         print(f"  {i}. [{d['тип_индекс']}] {flag} {d['корреспондент'][:30]} | {d['тема'][:50]}")
+    mode_label = os.environ.get('ASUD_MODE', 'mix')
     print(f"\nВсего к обработке: {len(docs)}  (ФИО: {known}, заглушка: {unknown})")
+    print(f"режим: {mode_label.upper()}  —  создание + регистрация + На резолюцию + .msg по Link")
 
     confirm = input("Начать? (да/нет): ").strip().lower()
     if confirm not in ("да", "д", "y", "yes", ""):

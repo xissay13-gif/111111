@@ -679,7 +679,9 @@ def main():
         ti = d.get("тема_индекс") or ""
         print(f"  {i}. [{ao:3} тема={ti}] {d['корреспондент']} | "
               f"{d['содержание'][:50]}...")
-    print(f"\nВсего: {len(docs)}")
+    mode_label = os.environ.get('ASUD_MODE', 'auto-create')
+    print(f"\nВсего: {len(docs)}  •  режим: {mode_label.upper()}")
+    print("auto-create: создание + регистрация + На резолюцию (без .msg)")
 
     if input("Начать? (да/нет): ").strip().lower() not in ("да", "д", "y", "yes", ""):
         sys.exit(0)
