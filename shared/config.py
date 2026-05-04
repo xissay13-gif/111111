@@ -63,7 +63,7 @@ def load():
 
 def setup_file_logger(mode_name="asud"):
     """Подключает FileHandler с DEBUG-уровнем рядом с exe.
-    Имя файла: asud_<mode>_<YYYYMMDD_HHMMSS>.log
+    Имя файла: asud_<mode>_<YYYYMMDD_HHMMSS>.txt
 
     Возвращает путь к лог-файлу (или None если упало).
     Вызывается из main() каждого flow.
@@ -71,7 +71,7 @@ def setup_file_logger(mode_name="asud"):
     from datetime import datetime
     try:
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        path = os.path.join(get_base_dir(), f"asud_{mode_name}_{ts}.log")
+        path = os.path.join(get_base_dir(), f"asud_{mode_name}_{ts}.txt")
         fh = logging.FileHandler(path, encoding='utf-8')
         fh.setLevel(logging.DEBUG)
         fh.setFormatter(logging.Formatter(
