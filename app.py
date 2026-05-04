@@ -2,8 +2,10 @@
 app.py — Единая точка входа для АСУД-автоматизации создания документов.
 
 Поддерживаемые режимы:
-  • mix         — создание входящих документов с прикреплением .msg по Link
-  • auto-create — создание входящих документов без поиска .msg (используется пустышка)
+  • mix         — создание + регистрация + На резолюцию + .msg по Link
+  • auto-create — создание + регистрация + На резолюцию (без .msg по Link)
+  • smart       — создание ТОЛЬКО как черновик + .msg по Link (без регистрации,
+                  корреспондент = «Неизвестный Неизвестный Неизвестный»)
 
 Выдача резолюций — отдельный exe, ветка clean-resolutions.
 
@@ -11,11 +13,13 @@ app.py — Единая точка входа для АСУД-автоматиз
   python app.py                  # auto-detect режима по xlsx
   python app.py --mode=mix
   python app.py --mode=auto-create
+  python app.py --mode=smart
   python app.py --xlsx=path.xlsx --mode=...
 
 Auto-detect:
   • Лист содержит колонку 'Link' (старый mix-формат)          → mix
   • Лист 'результат' (новый формат) или Subject/корреспондент → auto-create
+  Smart НЕ определяется автоматически (тот же xlsx что у mix), нужен --mode=smart
 """
 
 import argparse
@@ -60,7 +64,7 @@ def detect_mode(xlsx_path):
 def main():
     parser = argparse.ArgumentParser(
         description="АСУД ИК — автоматизация документооборота")
-    parser.add_argument('--mode', choices=['mix', 'auto-create'],
+    parser.add_argument('--mode', choices=['mix', 'auto-create', 'smart'],
                         help="Режим работы (если не задан — auto-detect по xlsx)")
     parser.add_argument('--xlsx', help="Путь к реестру (если не задан — спрашиваем)")
     args = parser.parse_args()
@@ -100,6 +104,8 @@ def main():
         from flows.mix import main as flow_main
     elif mode == 'auto-create':
         from flows.auto_create import main as flow_main
+    elif mode == 'smart':
+        from flows.smart import main as flow_main
     else:
         log.error(f"Неизвестный режим: {mode}")
         sys.exit(1)

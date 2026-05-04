@@ -40,6 +40,7 @@ jobs:
         --hidden-import=shared.okrug_parser
         --hidden-import=flows.mix
         --hidden-import=flows.auto_create
+        --hidden-import=flows.smart
         app.py
 
     - name: Upload EXE
