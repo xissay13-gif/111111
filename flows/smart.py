@@ -378,6 +378,7 @@ def _is_port_open(host, port, timeout=0.5):
 def main():
     global settings
     settings = cfg.load()
+    cfg.setup_file_logger("smart")
 
     log.info("=" * 50)
     log.info("АСУД ИК — Smart-routing (черновики с прикреплением .msg)")

@@ -59,3 +59,29 @@ def load():
         except Exception as e:
             log.warning(f"Ошибка чтения config.json: {e}, используем дефолты")
     return cfg
+
+
+def setup_file_logger(mode_name="asud"):
+    """Подключает FileHandler с DEBUG-уровнем рядом с exe.
+    Имя файла: asud_<mode>_<YYYYMMDD_HHMMSS>.log
+
+    Возвращает путь к лог-файлу (или None если упало).
+    Вызывается из main() каждого flow.
+    """
+    from datetime import datetime
+    try:
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        path = os.path.join(get_base_dir(), f"asud_{mode_name}_{ts}.log")
+        fh = logging.FileHandler(path, encoding='utf-8')
+        fh.setLevel(logging.DEBUG)
+        fh.setFormatter(logging.Formatter(
+            '%(asctime)s.%(msecs)03d [%(levelname)s] %(name)s: %(message)s',
+            datefmt='%H:%M:%S'))
+        # Корневой логгер должен пропускать DEBUG чтобы файл-handler их получил
+        logging.getLogger().setLevel(logging.DEBUG)
+        logging.getLogger().addHandler(fh)
+        logging.getLogger("asud").info(f"Подробный лог пишется в: {path}")
+        return path
+    except Exception as e:
+        logging.getLogger("asud").warning(f"Не удалось создать файл лога: {e}")
+        return None

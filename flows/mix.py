@@ -766,6 +766,7 @@ settings = {}
 def main():
     global settings
     settings = cfg.load()
+    cfg.setup_file_logger("mix")
 
     log.info("=" * 50)
     log.info("АСУД ИК — MIX (auto-create + smart-routing)")

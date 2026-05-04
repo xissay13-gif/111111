@@ -637,6 +637,7 @@ settings = {}
 def main():
     global settings
     settings = cfg.load()
+    cfg.setup_file_logger("auto_create")
 
     log.info("=" * 50)
     log.info("АСУД ИК — Входящие + автосоздание корреспондентов")
