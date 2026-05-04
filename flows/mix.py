@@ -512,22 +512,41 @@ def capture_asud_id(driver, timeout=15):
     return None
 
 
+def _wait_button_enabled(driver, css_selector, timeout=20):
+    """Ждёт пока кнопка станет clickable (data-disabled != '1', visible).
+    После attach АСУД на 1-3s держит register-кнопку в disabled пока обрабатывает upload."""
+    end = time.monotonic() + timeout
+    last_state = None
+    while time.monotonic() < end:
+        try:
+            btn = driver.find_element(By.CSS_SELECTOR, css_selector)
+            disabled = btn.get_attribute('data-disabled')
+            if btn.is_displayed() and disabled != '1':
+                return btn
+            if last_state != disabled:
+                log.debug(f"  кнопка disabled={disabled}, жду...")
+                last_state = disabled
+        except Exception as e:
+            if last_state != 'missing':
+                log.debug(f"  кнопка ещё не в DOM ({e})")
+                last_state = 'missing'
+        time.sleep(0.3)
+    return None
+
+
 def register_and_resolve(driver, index, total):
     """Регистрирует + На резолюцию + Да. Возвращает asud_id (если захватили) или None."""
     log.info("Регистрирую...")
     registered = False
     asud_id = None
     try:
-        btn = WebDriverWait(driver, cfg.DEFAULTS["timeout"]).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR,
-                "#header-action-btn-register, [id*='header-action-btn-register']")))
+        # Ждём ЕНАБЛЕНУЮ кнопку — после attach она может быть data-disabled='1'
+        btn = _wait_button_enabled(driver,
+            "#header-action-btn-register, [id*='header-action-btn-register']",
+            timeout=cfg.DEFAULTS["timeout"])
+        if not btn:
+            raise Exception("'Зарегистрировать' не активировалась")
         click(driver, btn, "Зарегистрировать")
-        # capture_asud_id внутри сам ждёт через WebDriverWait — sleep не нужен
-        asud_id = capture_asud_id(driver, timeout=10)
-        if asud_id:
-            log.info(f"Документ {index}/{total} ЗАРЕГИСТРИРОВАН: {asud_id}")
-        else:
-            log.warning(f"Документ {index}/{total} ЗАРЕГИСТРИРОВАН (номер не захватили)")
         registered = True
     except Exception:
         try:
@@ -540,16 +559,13 @@ def register_and_resolve(driver, index, total):
     if not registered:
         return None
 
-    # На резолюцию
+    # Ждём появления "На резолюцию" — это маркер что регистрация прошла
+    # (asud_id появляется одновременно — захватим следом)
     res_btn = None
-    for _ in range(10):
-        try:
-            btn = driver.find_element(By.ID, "header-action-btn-send_on_resolution")
-            if btn.is_displayed():
-                res_btn = btn
-                break
-        except Exception:
-            pass
+    try:
+        res_btn = WebDriverWait(driver, 15).until(
+            EC.presence_of_element_located((By.ID, "header-action-btn-send_on_resolution")))
+    except Exception:
         try:
             for b in driver.find_elements(By.XPATH, "//*[contains(text(),'На резолюцию')]"):
                 if b.is_displayed():
@@ -557,9 +573,13 @@ def register_and_resolve(driver, index, total):
                     break
         except Exception:
             pass
-        if res_btn:
-            break
-        time.sleep(1)
+
+    # DOM готов — asud_id ловится за 100-200ms
+    asud_id = capture_asud_id(driver, timeout=3)
+    if asud_id:
+        log.info(f"Документ {index}/{total} ЗАРЕГИСТРИРОВАН: {asud_id}")
+    else:
+        log.warning(f"Документ {index}/{total} ЗАРЕГИСТРИРОВАН (номер не захватили)")
 
     if not res_btn:
         log.warning("'На резолюцию' не появилась")
