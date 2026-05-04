@@ -332,42 +332,15 @@ def capture_asud_id(driver, timeout=15):
     return None
 
 
-def _wait_button_enabled(driver, css_selector, timeout=20):
-    """Ждёт пока кнопка станет clickable (data-disabled != '1', visible).
-    После attach АСУД на 1-3s держит register-кнопку в disabled пока обрабатывает upload.
-    Поллинг 100ms — чтобы поймать переход disabled→enabled с минимальной задержкой."""
-    end = time.monotonic() + timeout
-    last_state = None
-    while time.monotonic() < end:
-        try:
-            btn = driver.find_element(By.CSS_SELECTOR, css_selector)
-            disabled = btn.get_attribute('data-disabled')
-            if btn.is_displayed() and disabled != '1':
-                return btn
-            if last_state != disabled:
-                log.debug(f"  кнопка {css_selector} disabled={disabled}, жду...")
-                last_state = disabled
-        except Exception as e:
-            if last_state != 'missing':
-                log.debug(f"  кнопка {css_selector} ещё не в DOM ({e})")
-                last_state = 'missing'
-        time.sleep(0.1)
-    return None
-
-
 def register_and_resolve(driver, index, total):
     """Регистрирует + На резолюцию + Да. Возвращает asud_id (или None)."""
     log.info("Регистрирую...")
     registered = False
     asud_id = None
     try:
-        # Ждём именно ЕНАБЛЕНУЮ кнопку — после attach она может быть
-        # data-disabled='1' пока АСУД обрабатывает upload файла
-        btn = _wait_button_enabled(driver,
-            "#header-action-btn-register, [id*='header-action-btn-register']",
-            timeout=cfg.DEFAULTS["timeout"])
-        if not btn:
-            raise Exception("'Зарегистрировать' не активировалась за timeout")
+        btn = WebDriverWait(driver, cfg.DEFAULTS["timeout"]).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR,
+                "#header-action-btn-register, [id*='header-action-btn-register']")))
         click(driver, btn, "Зарегистрировать")
         registered = True
     except Exception:
