@@ -1,20 +1,19 @@
 """
-app.py — Единая точка входа для АСУД-автоматизации.
+app.py — Единая точка входа для АСУД-автоматизации создания документов.
 
 Поддерживаемые режимы:
   • mix         — создание входящих документов с прикреплением .msg по Link
   • auto-create — создание входящих документов без поиска .msg (используется пустышка)
-  • resolutions — выдача резолюций по уже зарегистрированным документам
+
+Выдача резолюций — отдельный exe, ветка clean-resolutions.
 
 Запуск:
   python app.py                  # auto-detect режима по xlsx
   python app.py --mode=mix
   python app.py --mode=auto-create
-  python app.py --mode=resolutions
   python app.py --xlsx=path.xlsx --mode=...
 
 Auto-detect:
-  • Имя файла оканчивается на _резолюции.xlsx                 → resolutions
   • Лист содержит колонку 'Link' (старый mix-формат)          → mix
   • Лист 'результат' (новый формат) или Subject/корреспондент → auto-create
 """
@@ -38,28 +37,20 @@ log = logging.getLogger("asud.app")
 
 
 def detect_mode(xlsx_path):
-    """Определяет режим по структуре xlsx."""
-    name = os.path.basename(xlsx_path).lower()
-    if name.endswith('_резолюции.xlsx') or 'резолюци' in name:
-        return 'resolutions'
-
+    """Определяет режим по структуре xlsx (mix или auto-create)."""
     try:
         wb = openpyxl.load_workbook(xlsx_path, read_only=True, data_only=True)
-        # Если есть лист 'результат' — это новый auto-create формат
+        # Лист 'результат' — новый auto-create формат
         if 'результат' in wb.sheetnames:
             wb.close()
             return 'auto-create'
-        # Иначе смотрим заголовки активного листа
         ws = wb.active
         headers = [str(c.value or '').lower()
                    for c in next(ws.iter_rows(max_row=1))]
         wb.close()
-        # Колонка 'link' в заголовках → mix-flow (есть .msg по ссылке)
+        # Колонка 'link' → mix-flow (есть .msg по ссылке)
         if any('link' in h for h in headers):
             return 'mix'
-        # Колонки ОПТС/ОРТС → resolutions
-        if any('опт' in h or 'орт' in h for h in headers):
-            return 'resolutions'
     except Exception as e:
         log.warning(f"Не удалось прочитать {xlsx_path} для auto-detect: {e}")
 
@@ -69,7 +60,7 @@ def detect_mode(xlsx_path):
 def main():
     parser = argparse.ArgumentParser(
         description="АСУД ИК — автоматизация документооборота")
-    parser.add_argument('--mode', choices=['mix', 'auto-create', 'resolutions'],
+    parser.add_argument('--mode', choices=['mix', 'auto-create'],
                         help="Режим работы (если не задан — auto-detect по xlsx)")
     parser.add_argument('--xlsx', help="Путь к реестру (если не задан — спрашиваем)")
     args = parser.parse_args()
@@ -109,8 +100,6 @@ def main():
         from flows.mix import main as flow_main
     elif mode == 'auto-create':
         from flows.auto_create import main as flow_main
-    elif mode == 'resolutions':
-        from flows.resolutions import main as flow_main
     else:
         log.error(f"Неизвестный режим: {mode}")
         sys.exit(1)
