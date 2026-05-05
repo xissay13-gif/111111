@@ -168,6 +168,29 @@ def close_open_modals(driver, max_escapes=5):
     log.warning(f"Не все модалки закрылись после {max_escapes} Escape")
 
 
+def wait_pointer_events_auto(driver, element, timeout=2):
+    """Ждёт пока CSS pointer-events на элементе станет НЕ 'none'.
+
+    GXT в transition-анимации (например, после Save рендерит кнопку
+    'Зарегистрировать') может ставить pointer-events:none на 100-500ms.
+    Клик в это время визуально проходит, но handler не вызывается.
+
+    Возвращает True если pointer-events стал auto/inherit/etc,
+    False если за timeout не дождались.
+    """
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        try:
+            pe = driver.execute_script(
+                "return window.getComputedStyle(arguments[0]).pointerEvents;", element)
+            if pe and pe != 'none':
+                return True
+        except Exception:
+            pass
+        time.sleep(0.05)
+    return False
+
+
 def js_set_value(driver, element, value):
     """Устанавливает значение input через JS + dispatch events.
     Подходит для plain-полей (textarea, дата, номер) — без autocomplete."""

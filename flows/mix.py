@@ -40,7 +40,8 @@ from selenium.webdriver.support import expected_conditions as EC
 from shared import config as cfg
 from shared.ui import (click, wait_and_click, find_input_near_label,
                 wait_asud_loaded, wait_modal_closed, close_open_modals,
-                js_set_value, js_type_combobox, find_dropdown_options)
+                js_set_value, js_type_combobox, find_dropdown_options,
+                wait_pointer_events_auto)
 from shared.correspondent import (fill_correspondent_field, match_strict, fio_to_initials,
                            extract_fio_from_text)
 from shared.attachments import find_msg_by_link, get_dummy_msg, attach_content, move_to_done
@@ -570,6 +571,10 @@ def register_and_resolve(driver, index, total):
         btn = WebDriverWait(driver, cfg.DEFAULTS["timeout"]).until(
             EC.presence_of_element_located((By.CSS_SELECTOR,
                 "#header-action-btn-register, [id*='header-action-btn-register']")))
+        # GXT в transition-анимации после Save может ставить
+        # pointer-events:none на кнопку — клик пройдёт впустую.
+        # Ждём пока pointer-events станет 'auto' (макс 2s).
+        wait_pointer_events_auto(driver, btn, timeout=2)
         click(driver, btn, "Зарегистрировать")
 
         # Verify: 'На резолюцию' стала enabled? Если нет — повтор клика
