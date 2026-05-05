@@ -313,6 +313,22 @@ return null;
 """
 
 
+_DIAG_ASUD_ID_JS = r"""
+// Диагностика: что в DOM, когда capture не сработал.
+const out = {header_present: false, header_text: null, header_bolds: [], body_snippet: null};
+const header = document.querySelector("[data-marker='ScreenHeader1']");
+if (header) {
+    out.header_present = true;
+    out.header_text = (header.textContent || '').trim().slice(0, 300);
+    for (const b of header.querySelectorAll('b')) {
+        out.header_bolds.push((b.textContent || '').trim().slice(0, 100));
+    }
+}
+out.body_snippet = (document.body.innerText || '').slice(0, 800).replace(/\s+/g, ' ');
+return out;
+"""
+
+
 def capture_asud_id(driver, timeout=15):
     """Читает регистрационный номер документа после регистрации.
     Один JS-вызов на итерацию (быстрый поллинг 100ms).
@@ -328,6 +344,18 @@ def capture_asud_id(driver, timeout=15):
         except Exception:
             pass
         time.sleep(0.1)
+    # Диагностика: что было в DOM на момент таймаута
+    try:
+        diag = driver.execute_script(_DIAG_ASUD_ID_JS) or {}
+        log.warning(f"  capture diag: header_present={diag.get('header_present')}")
+        if diag.get('header_text'):
+            log.warning(f"  header_text: {diag['header_text']!r}")
+        for i, b in enumerate(diag.get('header_bolds', [])):
+            log.warning(f"  header_bold[{i}]: {b!r}")
+        if diag.get('body_snippet'):
+            log.warning(f"  body[0:800]: {diag['body_snippet']!r}")
+    except Exception:
+        pass
     log.warning("Регистрационный номер не захватили — пуст в output")
     return None
 
@@ -371,9 +399,9 @@ def register_and_resolve(driver, index, total):
         except Exception:
             pass
 
-    # Сейчас DOM готов — asud_id обычно ловится за 100-200ms;
-    # 500ms — компромисс: успеваем поймать в норме, не тормозим если не успели
-    asud_id = capture_asud_id(driver, timeout=0.5)
+    # DOM должен быть готов — но АСУД иногда обновляет ScreenHeader1
+    # не сразу; даём 3s, чтобы захват номера был надёжным
+    asud_id = capture_asud_id(driver, timeout=3)
     if asud_id:
         log.info(f"Документ {index}/{total} ЗАРЕГИСТРИРОВАН: {asud_id}")
     else:
