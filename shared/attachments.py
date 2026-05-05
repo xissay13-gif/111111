@@ -250,56 +250,173 @@ def _diag_file_inputs(driver, label):
         log.warning(f"[diag {label}] dump упал: {e}")
 
 
+def _attach_via_input(driver, file_path):
+    """Стратегия через CDP file chooser intercept + send_keys на скрытый input.
+
+    Найдено диагностикой стадии 0:
+      • АСУД использует GXT FileUploadButton — скрытый <input type='file'> с
+        name='SetContentDialog' создаётся через ~0.5-0.8s после клика
+        'Присоединить содержимое'.
+      • input невидим (display:none, rect 0×0), но functional.
+
+    Шаги:
+      1. Включаем Page.setInterceptFileChooserDialog → native picker не открывается
+      2. Кликаем 'Присоединить содержимое' → input создаётся в DOM, picker
+         перехвачен CDP'ом и не показан
+      3. Ждём появления input[name='SetContentDialog'] (до 3s)
+      4. Делаем input visible через JS (чтобы send_keys прошёл visibility-check)
+      5. input.send_keys(file_path) — Selenium через WebDriver-protocol устанавливает
+         значение файлового input'а без участия native picker
+      6. Выключаем intercept
+      7. Ждём confirm-кнопку, кликаем
+
+    Возвращает True если успех, False если что-то упало (caller fallback на pywinauto).
+    """
+    intercept_enabled = False
+    try:
+        # 1. Включаем перехват native file picker
+        try:
+            driver.execute_cdp_cmd("Page.setInterceptFileChooserDialog",
+                                    {"enabled": True})
+            intercept_enabled = True
+            log.debug("CDP file chooser intercept включён")
+        except Exception as e:
+            log.warning(f"CDP intercept не доступен: {e}")
+            return False
+
+        # 2. Клик по 'Присоединить содержимое' — picker не откроется (intercept)
+        try:
+            btn = WebDriverWait(driver, 20).until(
+                EC.presence_of_element_located((By.XPATH,
+                    "//div[contains(text(),'Присоединить содержимое')]")))
+            click(driver, btn, "Присоединить содержимое (CDP)")
+        except Exception as e:
+            log.error(f"Кнопка 'Присоединить содержимое' не найдена: {e}")
+            return False
+
+        # 3. Ждём появления input[name='SetContentDialog']
+        end = time.monotonic() + 3
+        inp = None
+        while time.monotonic() < end:
+            try:
+                inp = driver.find_element(By.CSS_SELECTOR,
+                    "input[type='file'][name='SetContentDialog']")
+                break
+            except Exception:
+                pass
+            time.sleep(0.1)
+        if not inp:
+            log.warning("input[name='SetContentDialog'] не появился за 3s")
+            return False
+        log.debug(f"input найден: id={inp.get_attribute('id')}")
+
+        # 4. Делаем visible — иначе send_keys жалуется на visibility
+        driver.execute_script("""
+            var el = arguments[0];
+            el.style.display='block';
+            el.style.visibility='visible';
+            el.style.opacity='1';
+            el.style.position='absolute';
+            el.style.left='0px';
+            el.style.top='0px';
+            el.style.width='1px';
+            el.style.height='1px';
+            el.removeAttribute('hidden');
+            el.disabled = false;
+        """, inp)
+
+        # 5. send_keys устанавливает значение файлового input напрямую через
+        # WebDriver-protocol (без участия native picker)
+        inp.send_keys(file_path)
+        # Триггерим change на случай если автоматический dispatch не сработал
+        driver.execute_script(
+            "arguments[0].dispatchEvent(new Event('change',{bubbles:true}));", inp)
+        log.info(f"Файл отправлен через CDP-intercept + send_keys")
+        return True
+
+    except Exception as e:
+        log.warning(f"CDP-стратегия упала: {e}")
+        return False
+    finally:
+        # Выключаем intercept чтобы не мешать другим частям АСУД
+        if intercept_enabled:
+            try:
+                driver.execute_cdp_cmd("Page.setInterceptFileChooserDialog",
+                                        {"enabled": False})
+            except Exception:
+                pass
+
+
+def _wait_confirm_and_click(driver, timeout=20):
+    """Поллинг confirm-кнопки 'Присоединить' (после успешной загрузки файла)."""
+    end = time.time() + timeout
+    while time.time() < end:
+        try:
+            btns = driver.find_elements(By.CSS_SELECTOR,
+                "[id*='SetContent'], [id*='Send'], [id*='Submit']")
+            for b in btns:
+                if b.is_displayed():
+                    click(driver, b, f"confirm by-id {b.get_attribute('id')}")
+                    log.info("Файл присоединён!")
+                    return True
+        except Exception:
+            pass
+        try:
+            btns = driver.find_elements(By.XPATH,
+                "//button[contains(text(),'Присоединить')] | //div[contains(text(),'Присоединить')]")
+            visible = [b for b in btns if b.is_displayed()]
+            if visible:
+                click(driver, visible[-1], "confirm by-text 'Присоединить'")
+                log.info("Файл присоединён!")
+                return True
+        except Exception:
+            pass
+        time.sleep(0.5)
+
+    log.warning("Confirm-кнопка не найдена за timeout — диагностика:")
+    try:
+        candidates = driver.execute_script(_DIAG_BUTTONS_JS) or []
+        log.warning(f"  Видимых кандидатов: {len(candidates)}")
+        for c in candidates[:10]:
+            log.warning(f"    - {c}")
+    except Exception:
+        pass
+    return False
+
+
 def attach_content(driver, file_path):
-    """Прикрепляет файл. Сначала через input[type=file], затем pywinauto."""
+    """Прикрепляет файл к карточке документа.
+
+    Порядок стратегий:
+      1) CDP intercept + send_keys на скрытый input — основной путь, работает
+         без открытия Explorer'а, headless-совместим.
+      2) pywinauto + native Explorer — fallback если CDP не сработал
+         (не headless, требует interactive Windows session).
+    """
     log.info(f"Прикрепление: {os.path.basename(file_path)}")
 
-    # === DIAG момент 0: что в DOM до любых действий ===
-    _diag_file_inputs(driver, "0_before")
-
-    # Стратегия 1: input[type=file] уже в DOM
-    inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='file']")
-    if inputs:
-        try:
-            driver.execute_script("""
-                var el = arguments[0];
-                el.style.display='block'; el.style.visibility='visible';
-                el.style.opacity='1'; el.removeAttribute('hidden');
-                el.dispatchEvent(new Event('change',{bubbles:true}));
-            """, inputs[0])
-            inputs[0].send_keys(file_path)
-            driver.execute_script(
-                "arguments[0].dispatchEvent(new Event('change',{bubbles:true}));",
-                inputs[0])
-            log.info("Файл отправлен через input[type=file]")
+    # === Стратегия 1: CDP intercept + send_keys ===
+    if _attach_via_input(driver, file_path):
+        if _wait_confirm_and_click(driver, timeout=20):
             return
-        except Exception as e:
-            log.warning(f"input[type=file] не сработал: {e}")
+        log.warning("File загружен но confirm-кнопка не найдена — продолжаю")
+        return
 
-    # Стратегия 2: кнопка + pywinauto
+    # === Стратегия 2: pywinauto fallback ===
+    log.info("CDP-стратегия не сработала, fallback в pywinauto")
     if not PYWINAUTO:
-        log.error("pywinauto не установлен — пропускаю")
+        log.error("pywinauto не установлен — невозможно прикрепить")
         return
 
     try:
         btn = WebDriverWait(driver, 20).until(
             EC.presence_of_element_located((By.XPATH,
                 "//div[contains(text(),'Присоединить содержимое')]")))
-        # Пауза перед открытием модалки — даём АСУД полностью прогрузить состояние
         time.sleep(2)
-        click(driver, btn, "Присоединить содержимое")
+        click(driver, btn, "Присоединить содержимое (pywinauto)")
     except Exception as e:
         log.error(f"Кнопка 'Присоединить содержимое' не найдена: {e}")
         return
-
-    # === DIAG момент A: что появилось в DOM после клика, ДО открытия Explorer ===
-    # Поллим 1.5s чтобы увидеть динамически добавленный input
-    time.sleep(0.3)
-    _diag_file_inputs(driver, "A_after_click")
-    time.sleep(0.5)
-    _diag_file_inputs(driver, "A_after_click_+0.8s")
-    time.sleep(0.7)
-    _diag_file_inputs(driver, "A_after_click_+1.5s")
 
     try:
         app = None
@@ -324,52 +441,5 @@ def attach_content(driver, file_path):
         log.error(f"Ошибка pywinauto: {e}")
         return
 
-    # === DIAG момент B: что в DOM после Enter (закрытие Explorer + начало upload) ===
-    time.sleep(1)
-    _diag_file_inputs(driver, "B_after_enter")
-
-    # Пауза после закрытия Explorer — даём АСУД серверный upload + отрисовку confirm
     time.sleep(2)
-
-    # Поллинг: ищем видимую кнопку "Присоединить" (или по SetContent-id) до 20s.
-    # Не observer — чтобы не кликать раньше чем АСУД закончит upload.
-    end = time.time() + 20
-    while time.time() < end:
-        # 1) По id (приоритет)
-        try:
-            btns = driver.find_elements(By.CSS_SELECTOR,
-                "[id*='SetContent'], [id*='Send'], [id*='Submit']")
-            for b in btns:
-                if b.is_displayed():
-                    click(driver, b, f"confirm by-id {b.get_attribute('id')}")
-                    log.info("Файл присоединён!")
-                    return
-        except Exception:
-            pass
-        # 2) По тексту "Присоединить" — последняя видимая (не та что открывала Explorer)
-        try:
-            btns = driver.find_elements(By.XPATH,
-                "//button[contains(text(),'Присоединить')] | //div[contains(text(),'Присоединить')]")
-            visible = [b for b in btns if b.is_displayed()]
-            if len(visible) >= 1:
-                # Если она одна и совпадает с первой кнопкой — это значит модалка
-                # ещё не открылась (та же кнопка). Проверим что у нас НОВАЯ кнопка
-                # появилась относительно момента до Enter — берём последнюю.
-                target = visible[-1]
-                click(driver, target, "confirm by-text 'Присоединить'")
-                log.info("Файл присоединён!")
-                return
-        except Exception:
-            pass
-        time.sleep(0.5)
-
-    # Не нашли — диагностика
-    log.warning("Confirm-кнопка не найдена за 20s — диагностика:")
-    try:
-        candidates = driver.execute_script(_DIAG_BUTTONS_JS) or []
-        log.warning(f"  Видимых кандидатов: {len(candidates)}")
-        for c in candidates[:10]:
-            log.warning(f"    - {c}")
-    except Exception:
-        pass
-    log.error("Файл НЕ присоединён")
+    _wait_confirm_and_click(driver, timeout=20)
