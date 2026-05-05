@@ -281,35 +281,42 @@ def add_addressee(driver, person_name):
 
 _CAPTURE_ASUD_ID_JS = r"""
 // Один проход по DOM на стороне браузера. Возвращает регистрационный
-// номер или null. Строго: только из ScreenHeader1, плюс body-regex
-// как last-resort. Не сканируем "любой <b>" чтобы случайно не подобрать
-// другой id-подобный элемент на странице (например, id типа служебки).
-const RE = /\b([А-Я]{2,5}(?:\/[А-Я0-9.\-]+){2,})\b/u;
+// номер или null.
+// Реальная структура АСУД (из лога diag): номер лежит в body innerText
+// в виде "№ ОРТС/8/20890 от 05.05.2026". В ScreenHeader1 — только панель
+// действий, никаких <b> с номером.
+// JS \b НЕ работает с кириллицей даже под флагом /u — поэтому используем
+// явный контекст "№ ... от" для главного матча.
+const RE_NUM_OT = /№\s+([А-Я]{2,5}(?:\/[А-Я0-9.\-]+){2,})\s+от/u;
+const RE_LOOSE = /([А-Я]{2,5}(?:\/[А-Я0-9.\-]+){2,})/u;
+
 function looksLike(t) {
     if (!t) return false;
     t = t.trim();
     if (!t.includes('/') || t.length < 6) return false;
-    // НЕ дата вида "01.05.2026"
     if (/^\d{2}\.\d{2}\.\d{4}/.test(t)) return false;
-    // Должна быть хотя бы одна цифра — отсекаем чисто-буквенные совпадения
-    // (например, если бы где-то нашлось "АБВ/ГД/ЕЖ")
     if (!/\d/.test(t)) return false;
     return true;
 }
-// Строгий путь: только ScreenHeader1
+
+// Главный путь: явный паттерн "№ ... от" в body.innerText
+const body = document.body.innerText || '';
+let m = body.match(RE_NUM_OT);
+if (m && looksLike(m[1])) return m[1];
+
+// Fallback 1: ScreenHeader1 → <b> (вдруг АСУД когда-нибудь начнёт класть сюда)
 const header = document.querySelector("[data-marker='ScreenHeader1']");
 if (header) {
     for (const b of header.querySelectorAll('b')) {
         const t = (b.textContent || '').trim();
         if (looksLike(t)) return t;
     }
-    // Иногда номер не в <b>, а в самом тексте header'а — regex по нему
-    const m = (header.textContent || '').match(RE);
-    if (m && looksLike(m[1])) return m[1];
 }
-// Last resort: regex по всему телу страницы
-const m2 = (document.body.innerText || '').match(RE);
-if (m2 && looksLike(m2[1])) return m2[1];
+
+// Fallback 2: общий regex по body без \b (захватит любую конструкцию вида ХХ/.../...)
+m = body.match(RE_LOOSE);
+if (m && looksLike(m[1])) return m[1];
+
 return null;
 """
 
