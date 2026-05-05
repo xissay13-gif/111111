@@ -435,7 +435,7 @@ def create_correspondent(driver, person_name):
                 done_btn = vis[0]
         if done_btn:
             click(driver, done_btn, "Готово")
-            from ui import wait_modal_closed
+            from shared.ui import wait_modal_closed
             wait_modal_closed(driver)
             log.info(f"Корреспондент создан: {person_name}")
         else:
@@ -526,26 +526,71 @@ def fill_correspondent_field(driver, person_name):
             driver.execute_script("arguments[0].scrollIntoView({block:'center'});", target)
         except Exception:
             pass
-        time.sleep(0.3)
-        try:
-            _AC(driver).move_to_element(target).pause(0.3).click().perform()
-        except Exception:
-            try:
-                driver.execute_script("arguments[0].click();", target)
-            except Exception:
-                pass
-        time.sleep(1)
 
-        # Пост-верификация: поле должно заполниться фамилией
-        val = _correspondent_field_value(driver)
-        if val and surname.lower() in val.lower():
+        def _try_click_target(el, strategy):
+            try:
+                if strategy == 'ac':
+                    _AC(driver).move_to_element(el).pause(0.2).click().perform()
+                elif strategy == 'js':
+                    driver.execute_script("arguments[0].click();", el)
+                elif strategy == 'enter':
+                    inp.send_keys(_Keys.ENTER)
+                return True
+            except Exception:
+                return False
+
+        def _check():
+            time.sleep(0.5)
+            val = _correspondent_field_value(driver)
+            return val if (val and surname.lower() in val.lower()) else None
+
+        # Стратегия 1: клик по выбранному элементу (обычно <span>)
+        _try_click_target(target, 'ac')
+        val = _check()
+        if val:
             log.info(f"Корреспондент выбран: {person_name} (поле: {val!r})")
             return
+
+        # Стратегия 2: GXT часто требует клик по контейнеру-option, не по span
+        # Идём вверх по DOM ища родителя с role='option' / class*=option/item
+        log.debug(f"Клик по target не сработал, ищу родителя-option")
+        parent_option = None
+        try:
+            parent_option = driver.execute_script("""
+                let el = arguments[0];
+                for (let i = 0; i < 6 && el; i++) {
+                    el = el.parentElement;
+                    if (!el) break;
+                    const role = el.getAttribute('role');
+                    const cls = (el.className || '').toString().toLowerCase();
+                    if (role === 'option' || /\\b(option|item|menu-item|select-option)\\b/.test(cls)) {
+                        return el;
+                    }
+                }
+                return null;
+            """, target)
+        except Exception:
+            pass
+        if parent_option is not None:
+            _try_click_target(parent_option, 'ac')
+            val = _check()
+            if val:
+                log.info(f"Корреспондент выбран (по option-родителю): {person_name}")
+                return
+
+        # Стратегия 3: Enter — выпадашка часто реагирует на нажатие Enter
+        log.debug("Пробую Enter")
+        _try_click_target(None, 'enter')
+        val = _check()
+        if val:
+            log.info(f"Корреспондент выбран (Enter): {person_name}")
+            return
+
         log.warning(f"Клик прошёл ({target_desc}), но поле пустое/не наше "
                     f"(val={val!r}) — падаю в создание нового")
         try:
             inp.send_keys(_Keys.ESCAPE)
-            time.sleep(0.5)
+            time.sleep(0.3)
         except Exception:
             pass
         # продолжаем к create_correspondent ниже

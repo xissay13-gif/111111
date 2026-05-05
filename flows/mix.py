@@ -426,7 +426,7 @@ def add_addressee(driver, person_name):
     # перерисовал выпадашку без посимвольного ввода.
     js_type_combobox(driver, inp, surname)
 
-    from correspondent import match_correspondent
+    from shared.correspondent import match_correspondent
 
     all_results = []
     try:
