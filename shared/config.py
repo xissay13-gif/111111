@@ -65,6 +65,9 @@ def setup_file_logger(mode_name="asud"):
     """Подключает FileHandler с DEBUG-уровнем рядом с exe.
     Имя файла: asud_<mode>_<YYYYMMDD_HHMMSS>.txt
 
+    Консоль остаётся на INFO (как раньше — только описания действий),
+    в файл идёт DEBUG (всё подробно для разбора зависаний).
+
     Возвращает путь к лог-файлу (или None если упало).
     Вызывается из main() каждого flow.
     """
@@ -77,9 +80,15 @@ def setup_file_logger(mode_name="asud"):
         fh.setFormatter(logging.Formatter(
             '%(asctime)s.%(msecs)03d [%(levelname)s] %(name)s: %(message)s',
             datefmt='%H:%M:%S'))
-        # Корневой логгер должен пропускать DEBUG чтобы файл-handler их получил
-        logging.getLogger().setLevel(logging.DEBUG)
-        logging.getLogger().addHandler(fh)
+        # Корневой логгер — DEBUG (чтобы файл получал всё). Консольные
+        # хендлеры остаются на INFO — пользователь видит только описания
+        # действий, без debug-шума.
+        root = logging.getLogger()
+        root.setLevel(logging.DEBUG)
+        for h in root.handlers:
+            if not isinstance(h, logging.FileHandler):
+                h.setLevel(logging.INFO)
+        root.addHandler(fh)
         logging.getLogger("asud").info(f"Подробный лог пишется в: {path}")
         return path
     except Exception as e:
