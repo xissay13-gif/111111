@@ -203,9 +203,59 @@ return out;
 """
 
 
+_DIAG_FILE_INPUTS_JS = r"""
+// Диагностика для фонового режима: переписать все <input type="file"> в DOM
+// со всеми атрибутами и контекстом. Помогает понять есть ли скрытый input
+// который мы можем использовать вместо pywinauto + Explorer.
+const out = [];
+for (const inp of document.querySelectorAll("input[type='file']")) {
+    const r = inp.getBoundingClientRect();
+    const cs = window.getComputedStyle(inp);
+    const parentTag = inp.parentElement ? inp.parentElement.tagName : null;
+    const parentCls = inp.parentElement ? (inp.parentElement.className || '').toString().slice(0, 80) : null;
+    out.push({
+        id: inp.id || null,
+        name: inp.name || null,
+        accept: inp.getAttribute('accept'),
+        multiple: inp.multiple,
+        disabled: inp.disabled,
+        offsetParent: !!inp.offsetParent,  // true если отображается
+        rect: {w: r.width, h: r.height, x: r.left, y: r.top},
+        display: cs.display,
+        visibility: cs.visibility,
+        opacity: cs.opacity,
+        position: cs.position,
+        parent_tag: parentTag,
+        parent_class: parentCls,
+        outerHTML_preview: inp.outerHTML.slice(0, 200),
+    });
+}
+return {count: out.length, inputs: out};
+"""
+
+
+def _diag_file_inputs(driver, label):
+    """Дампит в лог состояние всех <input type='file'> на странице."""
+    try:
+        diag = driver.execute_script(_DIAG_FILE_INPUTS_JS) or {}
+        log.info(f"[diag {label}] input[type=file] count={diag.get('count', 0)}")
+        for i, inp in enumerate(diag.get('inputs', []) or []):
+            log.info(f"  [diag {label}] input[{i}]: id={inp.get('id')!r} name={inp.get('name')!r} "
+                     f"disabled={inp.get('disabled')} offsetParent={inp.get('offsetParent')} "
+                     f"display={inp.get('display')} visibility={inp.get('visibility')} "
+                     f"opacity={inp.get('opacity')}")
+            log.info(f"  [diag {label}]    rect={inp.get('rect')} parent={inp.get('parent_tag')}.{inp.get('parent_class')}")
+            log.info(f"  [diag {label}]    html: {inp.get('outerHTML_preview')!r}")
+    except Exception as e:
+        log.warning(f"[diag {label}] dump упал: {e}")
+
+
 def attach_content(driver, file_path):
     """Прикрепляет файл. Сначала через input[type=file], затем pywinauto."""
     log.info(f"Прикрепление: {os.path.basename(file_path)}")
+
+    # === DIAG момент 0: что в DOM до любых действий ===
+    _diag_file_inputs(driver, "0_before")
 
     # Стратегия 1: input[type=file] уже в DOM
     inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='file']")
@@ -242,6 +292,15 @@ def attach_content(driver, file_path):
         log.error(f"Кнопка 'Присоединить содержимое' не найдена: {e}")
         return
 
+    # === DIAG момент A: что появилось в DOM после клика, ДО открытия Explorer ===
+    # Поллим 1.5s чтобы увидеть динамически добавленный input
+    time.sleep(0.3)
+    _diag_file_inputs(driver, "A_after_click")
+    time.sleep(0.5)
+    _diag_file_inputs(driver, "A_after_click_+0.8s")
+    time.sleep(0.7)
+    _diag_file_inputs(driver, "A_after_click_+1.5s")
+
     try:
         app = None
         for title_re in [".*Открыт.*", ".*Open.*", ".*Выбор.*", ".*Choose.*"]:
@@ -264,6 +323,10 @@ def attach_content(driver, file_path):
     except Exception as e:
         log.error(f"Ошибка pywinauto: {e}")
         return
+
+    # === DIAG момент B: что в DOM после Enter (закрытие Explorer + начало upload) ===
+    time.sleep(1)
+    _diag_file_inputs(driver, "B_after_enter")
 
     # Пауза после закрытия Explorer — даём АСУД серверный upload + отрисовку confirm
     time.sleep(2)
