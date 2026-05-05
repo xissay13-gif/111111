@@ -16,7 +16,7 @@ log = logging.getLogger("asud.config")
 DEFAULTS = {
     "asud_url": "https://asud.interrao.ru/asudik/",
     "timeout": 20,
-    "outlook_dir": r"D:\OutlookSubjects\ТЭС",
+    "outlook_dir": "",  # пусто = не искать .msg, пользователь укажет интерактивно
     "addressees": [
         "Басманов Александр Владимирович",
         "Халецкая Юлия Владимировна",

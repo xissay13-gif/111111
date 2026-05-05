@@ -405,6 +405,22 @@ def main():
                 log.error("Неверный выбор")
                 sys.exit(1)
 
+    # Папка с .msg-файлами — интерактивный ввод
+    default_outlook = settings.get("outlook_dir", "") or cfg.DEFAULTS.get("outlook_dir", "")
+    print(f"\nПапка с .msg-файлами (поиск рекурсивно по подпапкам).")
+    if default_outlook:
+        print(f"Enter — использовать: {default_outlook}")
+    else:
+        print(f"Enter — без поиска .msg (все документы с пустышкой)")
+    user_dir = input("Путь: ").strip().strip('"').strip("'")
+    if user_dir:
+        settings["outlook_dir"] = user_dir
+    outlook_dir = settings.get("outlook_dir") or ""
+    if outlook_dir and not os.path.isdir(outlook_dir):
+        log.warning(f"Папка '{outlook_dir}' не существует — все вложения как пустышка")
+    elif outlook_dir:
+        log.info(f"Папка вложений: {outlook_dir}")
+
     msg_path = get_dummy_msg(base_dir)
     docs = load_excel(excel_path)
     if not docs:
