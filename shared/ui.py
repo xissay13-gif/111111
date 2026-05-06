@@ -168,6 +168,38 @@ def close_open_modals(driver, max_escapes=5):
     log.warning(f"Не все модалки закрылись после {max_escapes} Escape")
 
 
+def cdp_click(driver, element):
+    """Trusted mouse-click через CDP Input.dispatchMouseEvent.
+
+    В headless-режиме synthetic events от Selenium (ActionChains, JS click)
+    имеют isTrusted=false. GXT-widget'ы (комбобоксы, FileUploadButton) могут
+    отвергать такие события из соображений безопасности.
+
+    CDP-events генерируются на уровне Chromium-движка, у них isTrusted=true —
+    GXT не отличит от настоящего пользовательского клика.
+
+    Возвращает True если клик удался, False если CDP не доступен / упал.
+    """
+    try:
+        # Сначала прокручиваем в viewport — CDP кликает по абсолютным координатам
+        driver.execute_script(
+            "arguments[0].scrollIntoView({block:'center'});", element)
+        rect = element.rect
+        x = int(rect['x'] + rect['width'] / 2)
+        y = int(rect['y'] + rect['height'] / 2)
+        for evt_type in ('mousePressed', 'mouseReleased'):
+            driver.execute_cdp_cmd("Input.dispatchMouseEvent", {
+                "type": evt_type,
+                "x": x, "y": y,
+                "button": "left",
+                "clickCount": 1,
+            })
+        return True
+    except Exception as e:
+        log.debug(f"cdp_click упал: {e}")
+        return False
+
+
 def wait_pointer_events_auto(driver, element, timeout=2):
     """Ждёт пока CSS pointer-events на элементе станет НЕ 'none'.
 

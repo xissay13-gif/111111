@@ -20,7 +20,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
 from shared.ui import (click, find_input_near_label, close_open_modals,
-                js_type_combobox, find_dropdown_options)
+                js_type_combobox, find_dropdown_options, cdp_click)
 
 log = logging.getLogger("asud.correspondent")
 
@@ -544,7 +544,18 @@ def fill_correspondent_field(driver, person_name):
             val = _correspondent_field_value(driver)
             return val if (val and surname.lower() in val.lower()) else None
 
-        # Стратегия 1: клик по выбранному элементу (обычно <span>)
+        # Стратегия 1: CDP-click — TRUSTED mouse event (isTrusted=true).
+        # В headless ActionChains/JS click имеют isTrusted=false и GXT их игнорит.
+        # CDP Input.dispatchMouseEvent создаёт событие на уровне Chromium-движка,
+        # GXT не отличит от настоящего клика мышью.
+        log.debug("Стратегия 1: CDP trusted-click")
+        if cdp_click(driver, target):
+            val = _check()
+            if val:
+                log.info(f"Корреспондент выбран (CDP-click): {person_name} (поле: {val!r})")
+                return
+
+        # Стратегия 2: ActionChains-click — fallback (работает в обычном Edge)
         _try_click_target(target, 'ac')
         val = _check()
         if val:
