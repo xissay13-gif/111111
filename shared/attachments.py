@@ -328,9 +328,29 @@ def _attach_via_input(driver, file_path):
         # 5. send_keys устанавливает значение файлового input напрямую через
         # WebDriver-protocol (без участия native picker)
         inp.send_keys(file_path)
+
+        # 5а. ВАЖНО: дождаться пока input.files реально содержит файл.
+        # Без этого confirm-клик случается до того как upload дошёл, модалка
+        # остаётся открытой, файл по факту не прикреплён.
+        try:
+            WebDriverWait(driver, 10, poll_frequency=0.1).until(
+                lambda d: d.execute_script(
+                    "return arguments[0].files && arguments[0].files.length > 0;",
+                    inp))
+            log.debug("input.files подтверждён")
+        except Exception:
+            log.warning("input.files пустой за 10s — upload скорее всего не дошёл")
+            return False
+
         # Триггерим change на случай если автоматический dispatch не сработал
         driver.execute_script(
             "arguments[0].dispatchEvent(new Event('change',{bubbles:true}));", inp)
+
+        # 5б. Даём АСУД ~1.5s на серверный upload (файл уже в input, но
+        # сервер обрабатывает его асинхронно). Без этой паузы confirm-клик
+        # часто опережает upload.
+        time.sleep(1.5)
+
         log.info(f"Файл отправлен через CDP-intercept + send_keys")
         return True
 
