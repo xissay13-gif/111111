@@ -613,7 +613,7 @@ def fill_correspondent_field(driver, person_name):
             inp.click()
             time.sleep(0.1)
             # Re-type фамилию чтобы открыть выпадашку
-            from shared.ui import js_type_combobox
+            # (js_type_combobox уже импортирован на module level)
             js_type_combobox(driver, inp, surname)
             time.sleep(1)
             for _ in range(target_idx):
