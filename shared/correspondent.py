@@ -499,7 +499,6 @@ def fill_correspondent_field(driver, person_name):
     # Строгий матч по инициалам
     target = None
     target_desc = ""
-    target_idx = 0  # 1-based позиция найденного варианта в выпадашке (для keyboard-nav)
     for idx, r in enumerate(all_results, 1):
         try:
             raw = r.text
@@ -515,7 +514,6 @@ def fill_correspondent_field(driver, person_name):
             log.info(f"  [{idx}] {'OK' if ok else '--'} <{meta}> | {preview!r}")
             if ok and target is None:
                 target = r
-                target_idx = idx
                 target_desc = f"[{idx}] <{meta}> {preview!r}"
         except Exception as e:
             log.info(f"  [{idx}] ERR читаю text: {e}")
@@ -546,33 +544,16 @@ def fill_correspondent_field(driver, person_name):
             val = _correspondent_field_value(driver)
             return val if (val and surname.lower() in val.lower()) else None
 
-        def _diag_field():
-            try:
-                v = _correspondent_field_value(driver)
-                return repr(v) if v is not None else "<None>"
-            except Exception:
-                return "<error>"
-
-        # Стратегия 1: ActionChains-click по варианту (как в старой clean-mix
-        # версии где это работало стабильно). Тайминги: pause 0.3 до click,
-        # sleep 1 после — GXT нужно время на обработку клика и закрытие выпадашки.
-        time.sleep(0.3)
-        try:
-            _AC(driver).move_to_element(target).pause(0.3).click().perform()
-        except Exception:
-            try:
-                driver.execute_script("arguments[0].click();", target)
-            except Exception:
-                pass
-        time.sleep(1)
-        val = _correspondent_field_value(driver)
-        if val and surname.lower() in val.lower():
-            log.info(f"Корреспондент выбран (click): {person_name} (поле: {val!r})")
+        # Стратегия 1: клик по выбранному элементу (обычно <span>)
+        _try_click_target(target, 'ac')
+        val = _check()
+        if val:
+            log.info(f"Корреспондент выбран: {person_name} (поле: {val!r})")
             return
-        log.debug(f"  click: поле осталось {_diag_field()}")
 
-        # Стратегия 3: клик по контейнеру-option (родителю span'а)
-        log.debug(f"Click по target не сработал, ищу родителя-option")
+        # Стратегия 2: GXT часто требует клик по контейнеру-option, не по span
+        # Идём вверх по DOM ища родителя с role='option' / class*=option/item
+        log.debug(f"Клик по target не сработал, ищу родителя-option")
         parent_option = None
         try:
             parent_option = driver.execute_script("""
@@ -597,37 +578,13 @@ def fill_correspondent_field(driver, person_name):
                 log.info(f"Корреспондент выбран (по option-родителю): {person_name}")
                 return
 
-        # Стратегия 4: одиночный Enter — выпадашка иногда реагирует если уже
-        # есть focused-вариант после ввода
-        log.debug("Пробую одиночный Enter")
+        # Стратегия 3: Enter — выпадашка часто реагирует на нажатие Enter
+        log.debug("Пробую Enter")
         _try_click_target(None, 'enter')
         val = _check()
         if val:
             log.info(f"Корреспондент выбран (Enter): {person_name}")
             return
-
-        # Стратегия 5 (last resort): keyboard navigation. Выпадашка к этому моменту
-        # скорее всего закрыта click-ами, нужно её снова открыть и навигировать.
-        log.debug(f"Стратегия 5 keyboard-nav: re-type + DOWN×{target_idx} + ENTER")
-        try:
-            inp.click()
-            time.sleep(0.1)
-            # Re-type фамилию чтобы открыть выпадашку
-            # (js_type_combobox уже импортирован на module level)
-            js_type_combobox(driver, inp, surname)
-            time.sleep(1)
-            for _ in range(target_idx):
-                inp.send_keys(_Keys.ARROW_DOWN)
-                time.sleep(0.05)
-            inp.send_keys(_Keys.ENTER)
-            time.sleep(1)
-        except Exception as e:
-            log.debug(f"  keyboard-nav упал: {e}")
-        val = _correspondent_field_value(driver)
-        if val and surname.lower() in val.lower():
-            log.info(f"Корреспондент выбран (keyboard-nav): {person_name} (поле: {val!r})")
-            return
-        log.debug(f"  keyboard-nav: поле осталось {_diag_field()}")
 
         log.warning(f"Клик прошёл ({target_desc}), но поле пустое/не наше "
                     f"(val={val!r}) — падаю в создание нового")
