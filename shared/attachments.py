@@ -368,17 +368,24 @@ def _attach_via_input(driver, file_path):
 
 
 def _wait_confirm_and_click(driver, timeout=20):
-    """Поллинг confirm-кнопки 'Присоединить' (после успешной загрузки файла)."""
+    """Поллинг + клик confirm-кнопки 'Присоединить' с retry если модалка не закрылась.
+
+    На doc 2+ часто бывает: первый клик confirm проходит до того как сервер
+    закончил серверный upload → модалка остаётся открытой. Логика:
+      1. Найти confirm-кнопку, кликнуть
+      2. Подождать 3s что модалка закрылась (стала невидимой)
+      3. Если модалка ещё видна — повторить clicking каждые 2s до timeout
+      4. До 5 попыток клика. Если все — false (caller увидит warning).
+    """
     end = time.time() + timeout
-    while time.time() < end:
+
+    def _find_btn():
         try:
             btns = driver.find_elements(By.CSS_SELECTOR,
                 "[id*='SetContent'], [id*='Send'], [id*='Submit']")
             for b in btns:
                 if b.is_displayed():
-                    click(driver, b, f"confirm by-id {b.get_attribute('id')}")
-                    log.info("Файл присоединён!")
-                    return True
+                    return b
         except Exception:
             pass
         try:
@@ -386,14 +393,39 @@ def _wait_confirm_and_click(driver, timeout=20):
                 "//button[contains(text(),'Присоединить')] | //div[contains(text(),'Присоединить')]")
             visible = [b for b in btns if b.is_displayed()]
             if visible:
-                click(driver, visible[-1], "confirm by-text 'Присоединить'")
-                log.info("Файл присоединён!")
-                return True
+                return visible[-1]
         except Exception:
             pass
-        time.sleep(0.5)
+        return None
 
-    log.warning("Confirm-кнопка не найдена за timeout — диагностика:")
+    def _modal_closed():
+        # Модалка считается закрытой если confirm-кнопки больше нет видимой
+        return _find_btn() is None
+
+    attempts = 0
+    while time.time() < end and attempts < 5:
+        btn = _find_btn()
+        if not btn:
+            # Модалки нет — упешный финиш
+            log.info("Файл присоединён!")
+            return True
+
+        attempts += 1
+        click(driver, btn, f"confirm by-id {btn.get_attribute('id')} (try #{attempts})")
+
+        # Ждём 3s что модалка закрылась
+        sub_end = time.time() + 3
+        while time.time() < sub_end:
+            if _modal_closed():
+                log.info("Файл присоединён!")
+                return True
+            time.sleep(0.2)
+
+        # Модалка ещё открыта → подождём 2s (АСУД сервер дожёвывает) и retry
+        log.debug(f"Модалка ещё открыта после try #{attempts}, жду 2s и retry")
+        time.sleep(2)
+
+    log.warning(f"Confirm-кнопка кликнута {attempts} раз, но модалка не закрылась — диагностика:")
     try:
         candidates = driver.execute_script(_DIAG_BUTTONS_JS) or []
         log.warning(f"  Видимых кандидатов: {len(candidates)}")
