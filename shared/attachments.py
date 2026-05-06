@@ -349,15 +349,19 @@ def _attach_via_input(driver, file_path):
                 pass
 
 
-def _wait_confirm_and_click(driver, timeout=20):
+def _wait_confirm_and_click(driver, timeout=30):
     """Поллинг + клик confirm-кнопки 'Присоединить' с retry если модалка не закрылась.
 
-    На doc 2+ часто бывает: первый клик confirm проходит до того как сервер
-    закончил серверный upload → модалка остаётся открытой. Логика:
-      1. Найти confirm-кнопку, кликнуть
-      2. Подождать 3s что модалка закрылась (стала невидимой)
-      3. Если модалка ещё видна — повторить clicking каждые 2s до timeout
-      4. До 5 попыток клика. Если все — false (caller увидит warning).
+    На большинстве документов АСУД-server upload занимает >5s, и confirm-кнопка
+    в это время хоть и видима, но имеет pointer-events:none или data-disabled='1'
+    (как register-кнопка после Save). Кликаем только когда:
+      • кнопка реально clickable (pointer-events != 'none', data-disabled != '1')
+    Логика:
+      1. Найти confirm-кнопку
+      2. Подождать пока она станет clickable (poll 200ms, до 15s)
+      3. Кликнуть
+      4. Подождать 3s что модалка закрылась
+      5. Если ещё видна — снова ждать clickable + клик. До 5 попыток.
     """
     end = time.time() + timeout
 
@@ -380,17 +384,62 @@ def _wait_confirm_and_click(driver, timeout=20):
             pass
         return None
 
+    def _is_btn_clickable(btn):
+        """clickable = visible + pointer-events != 'none' + data-disabled != '1' + не в class*='disabled'"""
+        try:
+            if not btn.is_displayed():
+                return False
+            data_dis = btn.get_attribute('data-disabled')
+            aria_dis = btn.get_attribute('aria-disabled')
+            cls = (btn.get_attribute('class') or '').lower()
+            if data_dis == '1' or aria_dis == 'true' or 'disabled' in cls:
+                return False
+            pe = driver.execute_script(
+                "return window.getComputedStyle(arguments[0]).pointerEvents;", btn)
+            if pe == 'none':
+                return False
+            return True
+        except Exception:
+            return False
+
+    def _wait_clickable(btn, max_wait):
+        """Ждём пока кнопка станет clickable. Возвращает True/False."""
+        deadline = time.time() + max_wait
+        last_state = None
+        while time.time() < deadline:
+            if _is_btn_clickable(btn):
+                return True
+            try:
+                state = (
+                    f"d={btn.get_attribute('data-disabled')} "
+                    f"a={btn.get_attribute('aria-disabled')} "
+                    f"pe={driver.execute_script('return window.getComputedStyle(arguments[0]).pointerEvents;', btn)}"
+                )
+                if state != last_state:
+                    log.debug(f"  confirm не clickable: {state}")
+                    last_state = state
+            except Exception:
+                pass
+            time.sleep(0.2)
+        return False
+
     def _modal_closed():
-        # Модалка считается закрытой если confirm-кнопки больше нет видимой
         return _find_btn() is None
 
     attempts = 0
     while time.time() < end and attempts < 5:
         btn = _find_btn()
         if not btn:
-            # Модалки нет — упешный финиш
             log.info("Файл присоединён!")
             return True
+
+        # Дожидаемся пока кнопка реально станет clickable (upload завершился)
+        log.debug(f"Жду пока confirm станет clickable (try #{attempts + 1})")
+        if not _wait_clickable(btn, max_wait=15):
+            log.warning(f"Confirm-кнопка не стала clickable за 15s (try #{attempts + 1})")
+            attempts += 1
+            time.sleep(1)
+            continue
 
         attempts += 1
         click(driver, btn, f"confirm by-id {btn.get_attribute('id')} (try #{attempts})")
@@ -403,11 +452,10 @@ def _wait_confirm_and_click(driver, timeout=20):
                 return True
             time.sleep(0.2)
 
-        # Модалка ещё открыта → подождём 2s (АСУД сервер дожёвывает) и retry
         log.debug(f"Модалка ещё открыта после try #{attempts}, жду 2s и retry")
         time.sleep(2)
 
-    log.warning(f"Confirm-кнопка кликнута {attempts} раз, но модалка не закрылась — диагностика:")
+    log.warning(f"Confirm не сработал за {attempts} попыток — диагностика:")
     try:
         candidates = driver.execute_script(_DIAG_BUTTONS_JS) or []
         log.warning(f"  Видимых кандидатов: {len(candidates)}")
