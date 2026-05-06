@@ -547,39 +547,26 @@ def fill_correspondent_field(driver, person_name):
             return val if (val and surname.lower() in val.lower()) else None
 
         def _diag_field():
-            """Возвращает фактическое содержимое поля корреспондента (для диагностики)."""
             try:
                 v = _correspondent_field_value(driver)
                 return repr(v) if v is not None else "<None>"
             except Exception:
                 return "<error>"
 
-        # Стратегия 1: keyboard navigation — самый надёжный путь для GXT-комбобокса.
-        # GXT слушает ArrowDown/Enter на input — стандартный keyboard-pattern combobox.
-        # Жмём DOWN target_idx раз чтобы навести highlight на нужный вариант,
-        # потом Enter. Таймаут 50ms между нажатиями — GXT успевает переключить focus.
-        log.debug(f"Стратегия keyboard-nav: DOWN×{target_idx} + ENTER")
+        # Стратегия 1: ActionChains-click по варианту (как в старой clean-mix
+        # версии где это работало стабильно). Тайминги: pause 0.3 до click,
+        # sleep 1 после — GXT нужно время на обработку клика и закрытие выпадашки.
+        time.sleep(0.3)
         try:
-            # Явный click на input перед key-nav: гарантия что focus там, иначе
-            # DOWN/ENTER уйдут на body или другое поле формы
-            inp.click()
-            time.sleep(0.1)
-            for _ in range(target_idx):
-                inp.send_keys(_Keys.ARROW_DOWN)
-                time.sleep(0.05)
-            inp.send_keys(_Keys.ENTER)
-        except Exception as e:
-            log.debug(f"  keyboard-nav упал: {e}")
-        val = _check()
-        if val:
-            log.info(f"Корреспондент выбран (keyboard-nav): {person_name} (поле: {val!r})")
-            return
-        log.debug(f"  keyboard-nav: поле осталось {_diag_field()}")
-
-        # Стратегия 2: клик по выбранному элементу (обычно <span>)
-        _try_click_target(target, 'ac')
-        val = _check()
-        if val:
+            _AC(driver).move_to_element(target).pause(0.3).click().perform()
+        except Exception:
+            try:
+                driver.execute_script("arguments[0].click();", target)
+            except Exception:
+                pass
+        time.sleep(1)
+        val = _correspondent_field_value(driver)
+        if val and surname.lower() in val.lower():
             log.info(f"Корреспондент выбран (click): {person_name} (поле: {val!r})")
             return
         log.debug(f"  click: поле осталось {_diag_field()}")
@@ -618,6 +605,29 @@ def fill_correspondent_field(driver, person_name):
         if val:
             log.info(f"Корреспондент выбран (Enter): {person_name}")
             return
+
+        # Стратегия 5 (last resort): keyboard navigation. Выпадашка к этому моменту
+        # скорее всего закрыта click-ами, нужно её снова открыть и навигировать.
+        log.debug(f"Стратегия 5 keyboard-nav: re-type + DOWN×{target_idx} + ENTER")
+        try:
+            inp.click()
+            time.sleep(0.1)
+            # Re-type фамилию чтобы открыть выпадашку
+            from shared.ui import js_type_combobox
+            js_type_combobox(driver, inp, surname)
+            time.sleep(1)
+            for _ in range(target_idx):
+                inp.send_keys(_Keys.ARROW_DOWN)
+                time.sleep(0.05)
+            inp.send_keys(_Keys.ENTER)
+            time.sleep(1)
+        except Exception as e:
+            log.debug(f"  keyboard-nav упал: {e}")
+        val = _correspondent_field_value(driver)
+        if val and surname.lower() in val.lower():
+            log.info(f"Корреспондент выбран (keyboard-nav): {person_name} (поле: {val!r})")
+            return
+        log.debug(f"  keyboard-nav: поле осталось {_diag_field()}")
 
         log.warning(f"Клик прошёл ({target_desc}), но поле пустое/не наше "
                     f"(val={val!r}) — падаю в создание нового")
