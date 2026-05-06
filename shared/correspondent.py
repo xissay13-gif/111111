@@ -499,6 +499,7 @@ def fill_correspondent_field(driver, person_name):
     # Строгий матч по инициалам
     target = None
     target_desc = ""
+    target_idx = 0  # 1-based позиция найденного варианта в выпадашке (для keyboard-nav)
     for idx, r in enumerate(all_results, 1):
         try:
             raw = r.text
@@ -514,6 +515,7 @@ def fill_correspondent_field(driver, person_name):
             log.info(f"  [{idx}] {'OK' if ok else '--'} <{meta}> | {preview!r}")
             if ok and target is None:
                 target = r
+                target_idx = idx
                 target_desc = f"[{idx}] <{meta}> {preview!r}"
         except Exception as e:
             log.info(f"  [{idx}] ERR читаю text: {e}")
@@ -544,16 +546,32 @@ def fill_correspondent_field(driver, person_name):
             val = _correspondent_field_value(driver)
             return val if (val and surname.lower() in val.lower()) else None
 
-        # Стратегия 1: клик по выбранному элементу (обычно <span>)
+        # Стратегия 1: keyboard navigation — самый надёжный путь для GXT-комбобокса.
+        # GXT слушает ArrowDown/Enter на input — стандартный keyboard-pattern combobox.
+        # Жмём DOWN target_idx раз чтобы навести highlight на нужный вариант,
+        # потом Enter. Таймаут 50ms между нажатиями — GXT успевает переключить focus.
+        log.debug(f"Стратегия keyboard-nav: DOWN×{target_idx} + ENTER")
+        try:
+            for _ in range(target_idx):
+                inp.send_keys(_Keys.ARROW_DOWN)
+                time.sleep(0.05)
+            inp.send_keys(_Keys.ENTER)
+        except Exception as e:
+            log.debug(f"  keyboard-nav упал: {e}")
+        val = _check()
+        if val:
+            log.info(f"Корреспондент выбран (keyboard-nav): {person_name} (поле: {val!r})")
+            return
+
+        # Стратегия 2: клик по выбранному элементу (обычно <span>)
         _try_click_target(target, 'ac')
         val = _check()
         if val:
-            log.info(f"Корреспондент выбран: {person_name} (поле: {val!r})")
+            log.info(f"Корреспондент выбран (click): {person_name} (поле: {val!r})")
             return
 
-        # Стратегия 2: GXT часто требует клик по контейнеру-option, не по span
-        # Идём вверх по DOM ища родителя с role='option' / class*=option/item
-        log.debug(f"Клик по target не сработал, ищу родителя-option")
+        # Стратегия 3: клик по контейнеру-option (родителю span'а)
+        log.debug(f"Click по target не сработал, ищу родителя-option")
         parent_option = None
         try:
             parent_option = driver.execute_script("""
@@ -578,8 +596,9 @@ def fill_correspondent_field(driver, person_name):
                 log.info(f"Корреспондент выбран (по option-родителю): {person_name}")
                 return
 
-        # Стратегия 3: Enter — выпадашка часто реагирует на нажатие Enter
-        log.debug("Пробую Enter")
+        # Стратегия 4: одиночный Enter — выпадашка иногда реагирует если уже
+        # есть focused-вариант после ввода
+        log.debug("Пробую одиночный Enter")
         _try_click_target(None, 'enter')
         val = _check()
         if val:
