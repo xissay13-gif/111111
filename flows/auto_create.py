@@ -773,15 +773,7 @@ def main():
         input("Enter...")
         sys.exit(1)
 
-    options = EdgeOptions()
-    # eager: driver.get() разблокируется на DOMContentLoaded, не ждёт картинки/iframes.
-    # Все важные клики идут через WebDriverWait — ранний контроль безопасен.
-    options.page_load_strategy = "eager"
-    options.add_argument("--start-maximized")
-    options.add_argument("--auth-server-whitelist=*.interrao.ru")
-    options.add_argument("--auth-negotiate-delegate-whitelist=*.interrao.ru")
-    options.add_argument("--log-level=3")
-    options.add_experimental_option('excludeSwitches', ['enable-logging'])
+    options = cfg.build_edge_options()
 
     driver = webdriver.Edge(service=EdgeService(executable_path=driver_path), options=options)
 

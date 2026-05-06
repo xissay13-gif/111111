@@ -94,3 +94,26 @@ def setup_file_logger(mode_name="asud"):
     except Exception as e:
         logging.getLogger("asud").warning(f"Не удалось создать файл лога: {e}")
         return None
+
+
+def build_edge_options():
+    """Собирает EdgeOptions с учётом ASUD_HEADLESS env-переменной.
+
+    Если ASUD_HEADLESS=1 — добавляется --headless=new + фиксированный
+    window-size (для правильного рендера форм АСУД). Иначе обычный
+    --start-maximized.
+    """
+    from selenium.webdriver.edge.options import Options as EdgeOptions
+    options = EdgeOptions()
+    options.page_load_strategy = "eager"
+    if os.environ.get('ASUD_HEADLESS') == '1':
+        options.add_argument("--headless=new")
+        options.add_argument("--window-size=1920,1080")
+        logging.getLogger("asud").info("Edge запущен в HEADLESS режиме")
+    else:
+        options.add_argument("--start-maximized")
+    options.add_argument("--auth-server-whitelist=*.interrao.ru")
+    options.add_argument("--auth-negotiate-delegate-whitelist=*.interrao.ru")
+    options.add_argument("--log-level=3")
+    options.add_experimental_option('excludeSwitches', ['enable-logging'])
+    return options

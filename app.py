@@ -10,11 +10,12 @@ app.py — Единая точка входа для АСУД-автоматиз
 Выдача резолюций — отдельный exe, ветка clean-resolutions.
 
 Запуск:
-  python app.py                  # auto-detect режима по xlsx
+  python app.py                       # auto-detect режима по xlsx
   python app.py --mode=mix
   python app.py --mode=auto-create
   python app.py --mode=smart
   python app.py --xlsx=path.xlsx --mode=...
+  python app.py --headless            # фоновый режим (Edge без GUI)
 
 Auto-detect:
   • Лист содержит колонку 'Link' (старый mix-формат)          → mix
@@ -94,10 +95,15 @@ def main():
     parser.add_argument('--mode', choices=['mix', 'auto-create', 'smart'],
                         help="Режим работы (если не задан — auto-detect по xlsx)")
     parser.add_argument('--xlsx', help="Путь к реестру (если не задан — спрашиваем)")
+    parser.add_argument('--headless', action='store_true',
+                        help="Запустить Edge без GUI (фоновый режим, требует Стадии 1б)")
     args = parser.parse_args()
 
     base_dir = cfg.get_base_dir()
     log.info(f"Базовая папка: {base_dir}")
+    if args.headless:
+        os.environ['ASUD_HEADLESS'] = '1'
+        log.info("Режим: HEADLESS (Edge без GUI)")
 
     # Если xlsx не указан — выбираем интерактивно
     xlsx_path = args.xlsx

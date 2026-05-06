@@ -441,14 +441,8 @@ def main():
     if input("Начать? (да/нет): ").strip().lower() not in ("да", "д", "y", "yes", ""):
         sys.exit(0)
 
-    # Edge
-    options = EdgeOptions()
-    options.page_load_strategy = "eager"
-    options.add_argument("--start-maximized")
-    options.add_argument("--auth-server-whitelist=*.interrao.ru")
-    options.add_argument("--auth-negotiate-delegate-whitelist=*.interrao.ru")
-    options.add_argument("--log-level=3")
-    options.add_experimental_option('excludeSwitches', ['enable-logging'])
+    # Edge — общие опции из shared/config (учитывают ASUD_HEADLESS)
+    options = cfg.build_edge_options()
 
     driver_path = os.path.join(base_dir, "msedgedriver.exe")
     if not os.path.exists(driver_path):
