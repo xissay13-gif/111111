@@ -546,12 +546,24 @@ def fill_correspondent_field(driver, person_name):
             val = _correspondent_field_value(driver)
             return val if (val and surname.lower() in val.lower()) else None
 
+        def _diag_field():
+            """Возвращает фактическое содержимое поля корреспондента (для диагностики)."""
+            try:
+                v = _correspondent_field_value(driver)
+                return repr(v) if v is not None else "<None>"
+            except Exception:
+                return "<error>"
+
         # Стратегия 1: keyboard navigation — самый надёжный путь для GXT-комбобокса.
         # GXT слушает ArrowDown/Enter на input — стандартный keyboard-pattern combobox.
         # Жмём DOWN target_idx раз чтобы навести highlight на нужный вариант,
         # потом Enter. Таймаут 50ms между нажатиями — GXT успевает переключить focus.
         log.debug(f"Стратегия keyboard-nav: DOWN×{target_idx} + ENTER")
         try:
+            # Явный click на input перед key-nav: гарантия что focus там, иначе
+            # DOWN/ENTER уйдут на body или другое поле формы
+            inp.click()
+            time.sleep(0.1)
             for _ in range(target_idx):
                 inp.send_keys(_Keys.ARROW_DOWN)
                 time.sleep(0.05)
@@ -562,6 +574,7 @@ def fill_correspondent_field(driver, person_name):
         if val:
             log.info(f"Корреспондент выбран (keyboard-nav): {person_name} (поле: {val!r})")
             return
+        log.debug(f"  keyboard-nav: поле осталось {_diag_field()}")
 
         # Стратегия 2: клик по выбранному элементу (обычно <span>)
         _try_click_target(target, 'ac')
@@ -569,6 +582,7 @@ def fill_correspondent_field(driver, person_name):
         if val:
             log.info(f"Корреспондент выбран (click): {person_name} (поле: {val!r})")
             return
+        log.debug(f"  click: поле осталось {_diag_field()}")
 
         # Стратегия 3: клик по контейнеру-option (родителю span'а)
         log.debug(f"Click по target не сработал, ищу родителя-option")
