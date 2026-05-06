@@ -43,8 +43,13 @@ jobs:
         --hidden-import=flows.smart
         app.py
 
-    - name: Upload EXE
+    - name: Copy headless launcher
+      run: copy asud_headless.bat dist\
+
+    - name: Upload artifact (exe + bat)
       uses: actions/upload-artifact@v4
       with:
         name: asud
-        path: dist/asud.exe
+        path: |
+          dist/asud.exe
+          dist/asud_headless.bat
