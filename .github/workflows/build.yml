@@ -18,7 +18,7 @@ jobs:
         python-version: '3.12'
 
     - name: Install dependencies
-      run: pip install selenium openpyxl pyinstaller pyautogui pywinauto
+      run: pip install selenium openpyxl pyinstaller
 
     - name: Build EXE
       run: >
@@ -31,8 +31,6 @@ jobs:
         --hidden-import=selenium.webdriver.support.ui
         --hidden-import=selenium.webdriver.support.expected_conditions
         --hidden-import=openpyxl
-        --hidden-import=pyautogui
-        --hidden-import=pywinauto
         --hidden-import=shared.config
         --hidden-import=shared.ui
         --hidden-import=shared.correspondent

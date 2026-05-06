@@ -2,7 +2,8 @@
 attachments.py — Поиск и прикрепление .msg файлов.
 
 Ищет файл по Link из Excel в outlook_dir (рекурсивно по подпапкам),
-прикрепляет через pywinauto (нативный Windows Explorer).
+прикрепляет через CDP file chooser intercept + send_keys на скрытый input
+GXT FileUploadButton. Работает в headless-режиме, не требует Windows GUI.
 """
 
 import os
@@ -14,28 +15,9 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
-from shared.ui import click, wait_modal_closed
+from shared.ui import click, wait_modal_closed, close_open_modals
 
 log = logging.getLogger("asud.attach")
-
-try:
-    from pywinauto.application import Application
-    PYWINAUTO = True
-except ImportError:
-    PYWINAUTO = False
-
-
-# Спецсимволы которые pywinauto.type_keys интерпретирует как клавиши-модификаторы
-# (а не как буквальный символ для печати).
-# +=Shift, ^=Ctrl, %=Alt, ~=Enter, (){}=группировки/escape
-_TYPE_KEYS_SPECIAL = set('+^%~(){}')
-
-
-def _escape_for_type_keys(text):
-    """Экранирует спецсимволы pywinauto.type_keys через '{X}'.
-    Без этого путь типа 'D:\\Работа+проекты\\Имя(копия).msg' будет
-    напечатан с зажатием Shift и т.п. — реальное имя поломается."""
-    return ''.join('{' + c + '}' if c in _TYPE_KEYS_SPECIAL else c for c in text)
 
 
 def _link_to_variants(link):
@@ -204,9 +186,9 @@ return out;
 
 
 _DIAG_FILE_INPUTS_JS = r"""
-// Диагностика для фонового режима: переписать все <input type="file"> в DOM
-// со всеми атрибутами и контекстом. Помогает понять есть ли скрытый input
-// который мы можем использовать вместо pywinauto + Explorer.
+// Диагностика: переписать все <input type="file"> в DOM
+// со всеми атрибутами и контекстом. Используется при таймауте
+// _attach_via_input для понимания что в DOM пошло не так.
 const out = [];
 for (const inp of document.querySelectorAll("input[type='file']")) {
     const r = inp.getBoundingClientRect();
@@ -270,7 +252,7 @@ def _attach_via_input(driver, file_path):
       6. Выключаем intercept
       7. Ждём confirm-кнопку, кликаем
 
-    Возвращает True если успех, False если что-то упало (caller fallback на pywinauto).
+    Возвращает True если успех, False если что-то упало (caller сделает retry).
     """
     intercept_enabled = False
     try:
@@ -436,62 +418,30 @@ def _wait_confirm_and_click(driver, timeout=20):
     return False
 
 
-def attach_content(driver, file_path):
-    """Прикрепляет файл к карточке документа.
+def attach_content(driver, file_path, max_attempts=3):
+    """Прикрепляет файл к карточке документа через CDP intercept + send_keys.
 
-    Порядок стратегий:
-      1) CDP intercept + send_keys на скрытый input — основной путь, работает
-         без открытия Explorer'а, headless-совместим.
-      2) pywinauto + native Explorer — fallback если CDP не сработал
-         (не headless, требует interactive Windows session).
+    До max_attempts попыток. Между попытками закрываем висящие модалки
+    и даём АСУД пару секунд отдохнуть. Если все попытки провалились —
+    лог ERROR, файл не прикреплён, скрипт идёт дальше (не валит весь flow).
     """
     log.info(f"Прикрепление: {os.path.basename(file_path)}")
 
-    # === Стратегия 1: CDP intercept + send_keys ===
-    if _attach_via_input(driver, file_path):
-        if _wait_confirm_and_click(driver, timeout=20):
-            return
-        log.warning("File загружен но confirm-кнопка не найдена — продолжаю")
-        return
-
-    # === Стратегия 2: pywinauto fallback ===
-    log.info("CDP-стратегия не сработала, fallback в pywinauto")
-    if not PYWINAUTO:
-        log.error("pywinauto не установлен — невозможно прикрепить")
-        return
-
-    try:
-        btn = WebDriverWait(driver, 20).until(
-            EC.presence_of_element_located((By.XPATH,
-                "//div[contains(text(),'Присоединить содержимое')]")))
-        time.sleep(2)
-        click(driver, btn, "Присоединить содержимое (pywinauto)")
-    except Exception as e:
-        log.error(f"Кнопка 'Присоединить содержимое' не найдена: {e}")
-        return
-
-    try:
-        app = None
-        for title_re in [".*Открыт.*", ".*Open.*", ".*Выбор.*", ".*Choose.*"]:
+    for attempt in range(1, max_attempts + 1):
+        if attempt > 1:
+            log.warning(f"Прикрепление: попытка {attempt}/{max_attempts}")
+            # Закрыть всё что могло остаться от предыдущей попытки
             try:
-                app = Application(backend='win32').connect(title_re=title_re, timeout=10)
-                break
+                close_open_modals(driver)
             except Exception:
-                continue
+                pass
+            time.sleep(2)
 
-        if not app:
-            log.error("Окно Explorer не найдено")
-            return
+        if _attach_via_input(driver, file_path):
+            if _wait_confirm_and_click(driver, timeout=20):
+                return  # успех
+            log.warning(f"Попытка {attempt}: файл загружен но confirm не сработал")
+        else:
+            log.warning(f"Попытка {attempt}: _attach_via_input вернул False")
 
-        dlg = app.top_window()
-        dlg.set_focus()
-        dlg.type_keys(_escape_for_type_keys(file_path),
-                      with_spaces=True, pause=0)
-        dlg.type_keys("{ENTER}")
-        log.info(f"Файл выбран через Explorer")
-    except Exception as e:
-        log.error(f"Ошибка pywinauto: {e}")
-        return
-
-    time.sleep(2)
-    _wait_confirm_and_click(driver, timeout=20)
+    log.error(f"Прикрепление НЕ удалось за {max_attempts} попыток — файл не приложен")
