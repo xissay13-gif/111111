@@ -540,9 +540,16 @@ def fill_correspondent_field(driver, person_name):
                 return False
 
         def _check():
-            time.sleep(0.5)
-            val = _correspondent_field_value(driver)
-            return val if (val and surname.lower() in val.lower()) else None
+            """Поллинг поля до 3s — GXT в headless пропагирует value в input
+            не мгновенно, иногда 1-2 секунды. Раньше было sleep(0.5) что давало
+            false negative (поле уже заполнялось, но мы не видели), мы ошибочно
+            падали в create_correspondent."""
+            for _ in range(15):
+                time.sleep(0.2)
+                val = _correspondent_field_value(driver)
+                if val and surname.lower() in val.lower():
+                    return val
+            return None
 
         # Найти родительский option-контейнер ПЕРЕД click-стратегиями.
         # GXT часто рендерит option как <div role='option'><span>имя</span><span> - </span>...</div>
@@ -603,13 +610,19 @@ def fill_correspondent_field(driver, person_name):
             log.info(f"Корреспондент выбран (Enter): {person_name}")
             return
 
+        # ПОСЛЕДНЯЯ проверка с дополнительным ожиданием — на случай если
+        # АСУД заполнил поле очень поздно (>3s от первого клика)
+        time.sleep(2)
+        val = _correspondent_field_value(driver)
+        if val and surname.lower() in val.lower():
+            log.info(f"Корреспондент выбран (поздняя пропагация): {person_name} (поле: {val!r})")
+            return
+
         log.warning(f"Клик прошёл ({target_desc}), но поле пустое/не наше "
                     f"(val={val!r}) — падаю в создание нового")
-        try:
-            inp.send_keys(_Keys.ESCAPE)
-            time.sleep(0.3)
-        except Exception:
-            pass
+        # НЕ отправляем ESCAPE — в новой версии АСУД он стирает уже выбранное
+        # значение combobox'а, портит state для возможного выбранного-но-не-видимого
+        # корреспондента. create_correspondent сам разберётся со state модалки.
         # продолжаем к create_correspondent ниже
 
     # Нет совпадения — создаём нового
