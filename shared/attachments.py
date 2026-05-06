@@ -339,14 +339,11 @@ def _attach_via_input(driver, file_path):
     except Exception as e:
         log.warning(f"CDP-стратегия упала: {e}")
         return False
-    finally:
-        # Выключаем intercept чтобы не мешать другим частям АСУД
-        if intercept_enabled:
-            try:
-                driver.execute_cdp_cmd("Page.setInterceptFileChooserDialog",
-                                        {"enabled": False})
-            except Exception:
-                pass
+    # NB: intercept НЕ выключаем здесь — caller (attach_content) сам отключит
+    # после завершения всего flow включая confirm-click. Иначе на retry
+    # _wait_confirm_and_click может случайно нажать главную кнопку
+    # 'Присоединить содержимое' (имеет тот же текст что confirm), и АСУД
+    # откроет native picker потому что intercept выключен.
 
 
 def _wait_confirm_and_click(driver, timeout=30):
@@ -472,24 +469,37 @@ def attach_content(driver, file_path, max_attempts=3):
     До max_attempts попыток. Между попытками закрываем висящие модалки
     и даём АСУД пару секунд отдохнуть. Если все попытки провалились —
     лог ERROR, файл не прикреплён, скрипт идёт дальше (не валит весь flow).
+
+    CDP intercept ВКЛЮЧАЕТСЯ внутри _attach_via_input и не выключается там —
+    выключается ТОЛЬКО в finally этой функции, после всех retry'ев и confirm-click'ов.
+    Иначе случайный клик на похожую кнопку 'Присоединить содержимое' между
+    попытками открыл бы native picker.
     """
     log.info(f"Прикрепление: {os.path.basename(file_path)}")
 
-    for attempt in range(1, max_attempts + 1):
-        if attempt > 1:
-            log.warning(f"Прикрепление: попытка {attempt}/{max_attempts}")
-            # Закрыть всё что могло остаться от предыдущей попытки
-            try:
-                close_open_modals(driver)
-            except Exception:
-                pass
-            time.sleep(2)
+    try:
+        for attempt in range(1, max_attempts + 1):
+            if attempt > 1:
+                log.warning(f"Прикрепление: попытка {attempt}/{max_attempts}")
+                try:
+                    close_open_modals(driver)
+                except Exception:
+                    pass
+                time.sleep(2)
 
-        if _attach_via_input(driver, file_path):
-            if _wait_confirm_and_click(driver, timeout=20):
-                return  # успех
-            log.warning(f"Попытка {attempt}: файл загружен но confirm не сработал")
-        else:
-            log.warning(f"Попытка {attempt}: _attach_via_input вернул False")
+            if _attach_via_input(driver, file_path):
+                if _wait_confirm_and_click(driver, timeout=20):
+                    return  # успех
+                log.warning(f"Попытка {attempt}: файл загружен но confirm не сработал")
+            else:
+                log.warning(f"Попытка {attempt}: _attach_via_input вернул False")
 
-    log.error(f"Прикрепление НЕ удалось за {max_attempts} попыток — файл не приложен")
+        log.error(f"Прикрепление НЕ удалось за {max_attempts} попыток — файл не приложен")
+    finally:
+        # Выключаем CDP intercept в самом конце — гарантия что между retry'ями
+        # native picker не откроется случайно от чужих clikks.
+        try:
+            driver.execute_cdp_cmd("Page.setInterceptFileChooserDialog",
+                                    {"enabled": False})
+        except Exception:
+            pass
