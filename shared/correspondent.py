@@ -544,27 +544,10 @@ def fill_correspondent_field(driver, person_name):
             val = _correspondent_field_value(driver)
             return val if (val and surname.lower() in val.lower()) else None
 
-        # Стратегия 1: CDP-click — TRUSTED mouse event (isTrusted=true).
-        # В headless ActionChains/JS click имеют isTrusted=false и GXT их игнорит.
-        # CDP Input.dispatchMouseEvent создаёт событие на уровне Chromium-движка,
-        # GXT не отличит от настоящего клика мышью.
-        log.debug("Стратегия 1: CDP trusted-click")
-        if cdp_click(driver, target):
-            val = _check()
-            if val:
-                log.info(f"Корреспондент выбран (CDP-click): {person_name} (поле: {val!r})")
-                return
-
-        # Стратегия 2: ActionChains-click — fallback (работает в обычном Edge)
-        _try_click_target(target, 'ac')
-        val = _check()
-        if val:
-            log.info(f"Корреспондент выбран: {person_name} (поле: {val!r})")
-            return
-
-        # Стратегия 2: GXT часто требует клик по контейнеру-option, не по span
-        # Идём вверх по DOM ища родителя с role='option' / class*=option/item
-        log.debug(f"Клик по target не сработал, ищу родителя-option")
+        # Найти родительский option-контейнер ПЕРЕД click-стратегиями.
+        # GXT часто рендерит option как <div role='option'><span>имя</span><span> - </span>...</div>
+        # — handler на div, а наш XPath нашёл внутренний <span>. Клик по span'у
+        # ничего не даёт; нужен сам option.
         parent_option = None
         try:
             parent_option = driver.execute_script("""
@@ -583,13 +566,36 @@ def fill_correspondent_field(driver, person_name):
         except Exception:
             pass
         if parent_option is not None:
+            log.debug(f"Найден parent-option, делаю trusted-click по нему")
+
+        # Стратегия 1: CDP-click по PARENT-option (если найден) или target.
+        # CDP Input.dispatchMouseEvent создаёт isTrusted=true event — GXT не
+        # отличит от настоящего клика. И клик по родителю-option попадает
+        # в handler, а не в декоративный span.
+        cdp_target = parent_option if parent_option is not None else target
+        log.debug(f"Стратегия 1: CDP trusted-click по {'parent-option' if parent_option else 'target'}")
+        if cdp_click(driver, cdp_target):
+            val = _check()
+            if val:
+                log.info(f"Корреспондент выбран (CDP+parent): {person_name} (поле: {val!r})")
+                return
+
+        # Стратегия 2: ActionChains-click по target (для совместимости)
+        _try_click_target(target, 'ac')
+        val = _check()
+        if val:
+            log.info(f"Корреспондент выбран (AC click): {person_name} (поле: {val!r})")
+            return
+
+        # Стратегия 3: ActionChains-click по parent-option (если нашёлся)
+        if parent_option is not None:
             _try_click_target(parent_option, 'ac')
             val = _check()
             if val:
-                log.info(f"Корреспондент выбран (по option-родителю): {person_name}")
+                log.info(f"Корреспондент выбран (AC parent): {person_name} (поле: {val!r})")
                 return
 
-        # Стратегия 3: Enter — выпадашка часто реагирует на нажатие Enter
+        # Стратегия 4: Enter — выпадашка часто реагирует на нажатие Enter
         log.debug("Пробую Enter")
         _try_click_target(None, 'enter')
         val = _check()
