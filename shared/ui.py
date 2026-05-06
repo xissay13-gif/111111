@@ -178,15 +178,31 @@ def cdp_click(driver, element):
     CDP-events генерируются на уровне Chromium-движка, у них isTrusted=true —
     GXT не отличит от настоящего пользовательского клика.
 
+    Полная mouse-цепочка: mouseMoved (hover) → mousePressed → mouseReleased.
+    GXT-widget'ы часто требуют hover-state перед click чтобы пометить
+    target как 'over' / 'highlighted'.
+
     Возвращает True если клик удался, False если CDP не доступен / упал.
     """
     try:
-        # Сначала прокручиваем в viewport — CDP кликает по абсолютным координатам
+        # Прокручиваем в viewport — CDP кликает по viewport-абсолютным координатам
         driver.execute_script(
             "arguments[0].scrollIntoView({block:'center'});", element)
-        rect = element.rect
-        x = int(rect['x'] + rect['width'] / 2)
-        y = int(rect['y'] + rect['height'] / 2)
+        # Берём viewport-relative координаты через getBoundingClientRect
+        # (не зависят от страничного скролла, нужны для CDP)
+        coords = driver.execute_script("""
+            const r = arguments[0].getBoundingClientRect();
+            return {x: r.left + r.width/2, y: r.top + r.height/2};
+        """, element)
+        x = int(coords['x'])
+        y = int(coords['y'])
+        # 1. mouseMoved → GXT помечает элемент как hovered/highlighted
+        driver.execute_cdp_cmd("Input.dispatchMouseEvent", {
+            "type": "mouseMoved",
+            "x": x, "y": y,
+            "button": "none",
+        })
+        # 2. mousePressed → mouseReleased — собственно click
         for evt_type in ('mousePressed', 'mouseReleased'):
             driver.execute_cdp_cmd("Input.dispatchMouseEvent", {
                 "type": evt_type,

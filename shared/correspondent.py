@@ -564,7 +564,13 @@ def fill_correspondent_field(driver, person_name):
                     if (!el) break;
                     const role = el.getAttribute('role');
                     const cls = (el.className || '').toString().toLowerCase();
-                    if (role === 'option' || /\\b(option|item|menu-item|select-option)\\b/.test(cls)) {
+                    // Расширенный список классов GXT/Sencha widget'ов:
+                    // option/item/menu-item/select-option — общие
+                    // gxt-/x-combo/x-boundlist — Sencha-специфичные
+                    // ListItem/SelectItem — типичные именования виджетов
+                    if (role === 'option' ||
+                        /\\b(option|item|menu-item|select-option|combo-item|boundlist-item|ListItem|SelectItem)\\b/i.test(cls) ||
+                        /gxt-\\w*item|x-combo-list-item|x-boundlist-item/i.test(cls)) {
                         return el;
                     }
                 }
