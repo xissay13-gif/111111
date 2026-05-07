@@ -587,8 +587,12 @@ def create_one_document(driver, doc_data, index, total):
         log.error(f"Ошибка сохранения: {e}")
 
     if doc_data.get("файл"):
-        attach_content(driver, doc_data["файл"])
+        attached = attach_content(driver, doc_data["файл"])
         wait_modal_closed(driver)
+        if attached:
+            log.info(f"Документ {index}/{total}: вложение прикреплено ✓")
+        else:
+            log.warning(f"Документ {index}/{total}: вложение НЕ прикреплено ✗")
 
     asud_id = register_and_resolve(driver, index, total)
 

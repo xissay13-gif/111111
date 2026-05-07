@@ -335,8 +335,12 @@ def create_one_document(driver, doc_data, index, total):
     attach_path = find_msg_by_link(doc_data.get("link"), outlook_dir, dummy_path)
     if attach_path:
         log.info(f"Прикрепляю: {os.path.basename(attach_path)}")
-        attach_content(driver, attach_path)
+        attached = attach_content(driver, attach_path)
         wait_modal_closed(driver)
+        if attached:
+            log.info(f"Документ {index}/{total}: вложение прикреплено ✓")
+        else:
+            log.warning(f"Документ {index}/{total}: вложение НЕ прикреплено ✗")
         # Реальный (не dummy) файл — переносим в Завершено/.
         # В smart-routing критерий — успешный attach (документ в черновиках).
         if attach_path != dummy_path:

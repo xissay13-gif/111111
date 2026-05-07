@@ -476,9 +476,12 @@ def _wait_confirm_and_click(driver, timeout=30):
 def attach_content(driver, file_path, max_attempts=3):
     """Прикрепляет файл к карточке документа через CDP intercept + send_keys.
 
+    Возвращает True если файл успешно приложен, False если все retry'и
+    провалились. Caller'ы могут использовать результат для лога в
+    высокоуровневом логгере 'asud' (виден в консоли).
+
     До max_attempts попыток. Между попытками закрываем висящие модалки
-    и даём АСУД пару секунд отдохнуть. Если все попытки провалились —
-    лог ERROR, файл не прикреплён, скрипт идёт дальше (не валит весь flow).
+    и даём АСУД пару секунд отдохнуть.
 
     CDP intercept ВКЛЮЧАЕТСЯ внутри _attach_via_input и не выключается там —
     выключается ТОЛЬКО в finally этой функции, после всех retry'ев и confirm-click'ов.
@@ -499,12 +502,13 @@ def attach_content(driver, file_path, max_attempts=3):
 
             if _attach_via_input(driver, file_path):
                 if _wait_confirm_and_click(driver, timeout=20):
-                    return  # успех
+                    return True  # успех
                 log.warning(f"Попытка {attempt}: файл загружен но confirm не сработал")
             else:
                 log.warning(f"Попытка {attempt}: _attach_via_input вернул False")
 
         log.error(f"Прикрепление НЕ удалось за {max_attempts} попыток — файл не приложен")
+        return False
     finally:
         # Выключаем CDP intercept в самом конце — гарантия что между retry'ями
         # native picker не откроется случайно от чужих clikks.
