@@ -742,20 +742,53 @@ def register_and_resolve(driver, index, total):
 
 
 def close_card_and_wait_main(driver):
-    """Закрывает карточку через header-close-btn и ждёт главную страницу."""
+    """Закрывает карточку и ждёт главную страницу.
+
+    В DOM может быть несколько элементов с id='header-close-btn' (скрытые
+    модалки/карточки) — берём ПЕРВЫЙ ВИДИМЫЙ, иначе клик уходит в скрытый
+    элемент и карточка остаётся открытой. Если ни один не видим — пробуем
+    ESC как лёгкий fallback перед тяжёлым reload.
+    """
+    closed = False
+
     try:
-        close_btn = driver.find_element(By.ID, "header-close-btn")
-        if close_btn.is_displayed():
-            ActionChains(driver).move_to_element(close_btn).pause(0.2).click().perform()
-            log.info("Карточка закрыта")
-        else:
-            log.info("Карточка уже закрыта")
+        candidates = driver.find_elements(By.ID, "header-close-btn")
     except Exception:
-        log.info("Карточка уже закрыта")
+        candidates = []
+
+    for btn in candidates:
+        try:
+            if not btn.is_displayed():
+                continue
+        except Exception:
+            continue
+        try:
+            ActionChains(driver).move_to_element(btn).pause(0.2).click().perform()
+            log.info("Карточка закрыта")
+            closed = True
+            break
+        except Exception:
+            try:
+                driver.execute_script("arguments[0].click();", btn)
+                log.info("Карточка закрыта (JS)")
+                closed = True
+                break
+            except Exception:
+                continue
+
+    if not closed:
+        # Видимого header-close-btn нет — возможно карточка реально уже закрыта,
+        # либо ASUD рендерит её в нестандартном состоянии. ESC — дёшево и часто
+        # помогает, GXT-карточки на него реагируют.
+        try:
+            ActionChains(driver).send_keys(Keys.ESCAPE).perform()
+            log.debug("Карточка: попытка закрытия через ESC")
+        except Exception:
+            pass
 
     # Ждём главную напрямую — это и есть «карточка ушла + список загружен»
     try:
-        WebDriverWait(driver, 10).until(
+        WebDriverWait(driver, 8).until(
             EC.element_to_be_clickable((By.ID, "mainscreen-create-button")))
     except Exception:
         log.warning("Главная не загрузилась — перезагружаю")
