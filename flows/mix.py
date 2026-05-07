@@ -41,7 +41,7 @@ from shared import config as cfg
 from shared.ui import (click, wait_and_click, find_input_near_label,
                 wait_asud_loaded, wait_modal_closed, close_open_modals,
                 js_set_value, js_type_combobox, find_dropdown_options,
-                wait_pointer_events_auto)
+                wait_pointer_events_auto, is_duplicate_warning)
 from shared.correspondent import (fill_correspondent_field, match_strict, fio_to_initials,
                            extract_fio_from_text)
 from shared.attachments import find_msg_by_link, get_dummy_msg, attach_content, move_to_done
@@ -141,9 +141,11 @@ OKRUG_TO_FIO = {
 
 
 def _output_xlsx_path(excel_path):
-    """<реестр>_резолюции.xlsx рядом с реестром."""
-    base, _ext = os.path.splitext(excel_path)
-    return base + "_резолюции.xlsx"
+    """<реестр>_резолюции.xlsx в папке Registered/ рядом с exe."""
+    registered_dir = os.path.join(cfg.get_base_dir(), "Registered")
+    os.makedirs(registered_dir, exist_ok=True)
+    name = os.path.splitext(os.path.basename(excel_path))[0]
+    return os.path.join(registered_dir, name + "_резолюции.xlsx")
 
 
 def _ensure_output_xlsx(path):
@@ -783,6 +785,13 @@ def create_one_document(driver, doc_data, index, total):
         save_btn = WebDriverWait(driver, cfg.DEFAULTS["timeout"]).until(
             EC.element_to_be_clickable((By.ID, "header-save-btn")))
         click(driver, save_btn, "Сохранить")
+        # Quick-check: показывает ли АСУД "уже зарегистрирован" warning?
+        # Если да — пропускаем без долгого ожидания register-кнопки.
+        time.sleep(1.5)
+        if is_duplicate_warning(driver):
+            log.warning(f"Документ {index}/{total}: АСУД говорит УЖЕ ЗАРЕГИСТРИРОВАН — пропускаю")
+            close_open_modals(driver)
+            return None  # caller увидит None и не запишет в output
         # Ждём кнопку 'Зарегистрировать' — признак что save прошёл и форма ушла в режим регистрации
         try:
             WebDriverWait(driver, cfg.DEFAULTS["timeout"]).until(

@@ -62,8 +62,8 @@ def load():
 
 
 def setup_file_logger(mode_name="asud"):
-    """Подключает FileHandler с DEBUG-уровнем рядом с exe.
-    Имя файла: asud_<mode>_<YYYYMMDD_HHMMSS>.txt
+    """Подключает FileHandler с DEBUG-уровнем в папку Logs/ рядом с exe.
+    Имя файла: Logs/asud_<mode>_<YYYYMMDD_HHMMSS>.txt
 
     Консоль остаётся на INFO (как раньше — только описания действий),
     в файл идёт DEBUG (всё подробно для разбора зависаний).
@@ -73,8 +73,10 @@ def setup_file_logger(mode_name="asud"):
     """
     from datetime import datetime
     try:
+        logs_dir = os.path.join(get_base_dir(), "Logs")
+        os.makedirs(logs_dir, exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        path = os.path.join(get_base_dir(), f"asud_{mode_name}_{ts}.txt")
+        path = os.path.join(logs_dir, f"asud_{mode_name}_{ts}.txt")
         fh = logging.FileHandler(path, encoding='utf-8')
         fh.setLevel(logging.DEBUG)
         fh.setFormatter(logging.Formatter(

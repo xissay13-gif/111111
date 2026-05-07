@@ -153,6 +153,32 @@ def wait_modal_closed(driver, timeout=15):
             pass
 
 
+_DUPLICATE_MARKERS = (
+    "уже зарегистрирован",
+    "уже существует",
+    "дубликат",
+    "уже создан",
+    "повторная регистрация",
+)
+
+
+def is_duplicate_warning(driver):
+    """Проверяет показывает ли АСУД сообщение что документ уже зарегистрирован.
+
+    Используется ПОСЛЕ Save: если за 1-2s появилась warning/toast/модалка
+    с маркером 'уже зарегистрирован' — пропускаем документ без долгого
+    ожидания register-кнопки которая никогда не появится.
+
+    Возвращает True если найдено, False если нет.
+    """
+    try:
+        body_text = driver.find_element(By.TAG_NAME, "body").text or ''
+        body_lower = body_text.lower()
+        return any(m in body_lower for m in _DUPLICATE_MARKERS)
+    except Exception:
+        return False
+
+
 def close_open_modals(driver, max_escapes=5):
     """Закрывает все модалки через Escape."""
     log.info("Закрываю модалки...")
