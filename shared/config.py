@@ -65,8 +65,14 @@ def setup_file_logger(mode_name="asud"):
     """Подключает FileHandler с DEBUG-уровнем в папку Logs/ рядом с exe.
     Имя файла: Logs/asud_<mode>_<YYYYMMDD_HHMMSS>.txt
 
-    Консоль остаётся на INFO (как раньше — только описания действий),
-    в файл идёт DEBUG (всё подробно для разбора зависаний).
+    Консоль показывает только высокоуровневый flow (логгер 'asud') —
+    шумные под-логгеры (asud.ui, asud.correspondent, asud.attach, asud.okrug)
+    идут ТОЛЬКО в txt-файл. Это убирает из консоли «Клик: ...», «Ожидаю: ...»,
+    «Файл присоединён», «Корреспондент выбран» — оставляет понятный flow:
+
+    12:01:15 [INFO] ДОКУМЕНТ 1/50: ...
+    12:01:32 [INFO] Документ 1/50 ЗАРЕГИСТРИРОВАН: ОРТС/8/...
+    12:01:34 [INFO] Документ 1/50 НА РЕЗОЛЮЦИИ
 
     Возвращает путь к лог-файлу (или None если упало).
     Вызывается из main() каждого flow.
@@ -83,14 +89,23 @@ def setup_file_logger(mode_name="asud"):
             '%(asctime)s.%(msecs)03d [%(levelname)s] %(name)s: %(message)s',
             datefmt='%H:%M:%S'))
         # Корневой логгер — DEBUG (чтобы файл получал всё). Консольные
-        # хендлеры остаются на INFO — пользователь видит только описания
-        # действий, без debug-шума.
+        # хендлеры остаются на INFO.
         root = logging.getLogger()
         root.setLevel(logging.DEBUG)
         for h in root.handlers:
             if not isinstance(h, logging.FileHandler):
                 h.setLevel(logging.INFO)
         root.addHandler(fh)
+
+        # Шумные под-логгеры: НЕ propagate в root (значит не попадают в консоль),
+        # но получают свой file-handler чтобы по-прежнему писаться в txt.
+        for sub_name in ('asud.ui', 'asud.correspondent', 'asud.attach',
+                          'asud.okrug', 'asud.config'):
+            sub = logging.getLogger(sub_name)
+            sub.setLevel(logging.DEBUG)
+            sub.propagate = False
+            sub.addHandler(fh)
+
         logging.getLogger("asud").info(f"Подробный лог пишется в: {path}")
         return path
     except Exception as e:
