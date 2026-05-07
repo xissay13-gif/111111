@@ -25,6 +25,7 @@ from selenium.webdriver.edge.service import Service as EdgeService
 from shared import config as cfg
 from shared.ui import wait_asud_loaded
 from shared.correspondent import extract_fio_from_text
+from shared.okrug_parser import okrug_from_textbody
 
 # Переиспользуем создание/регистрацию/output из mix
 from flows import mix as mix_flow
@@ -43,6 +44,16 @@ settings = {}
 
 # ================= EMAIL → DOC_DATA =================
 
+# Имя .msg-файла начинается с даты-времени: '2026-05-06 10-58-43.msg'
+_FILENAME_DATE_RE = re.compile(r'^(\d{4}-\d{2}-\d{2})')
+
+
+def _msg_date_prefix(file_path):
+    """Извлекает 'YYYY-MM-DD' из имени .msg. None если не распарсилось."""
+    m = _FILENAME_DATE_RE.match(os.path.basename(file_path))
+    return m.group(1) if m else None
+
+
 def _msg_link(msg, file_path):
     """Генерирует Link для doc_data.
 
@@ -57,6 +68,61 @@ def _msg_link(msg, file_path):
     except Exception:
         pass
     return os.path.splitext(os.path.basename(file_path))[0]
+
+
+# ================= PER-DATE XLSX REGISTRY =================
+
+# Колонки реестра (под per-date).
+_REGISTRY_HEADERS = ["Номер", "Link", "Округ", "Subject", "Body"]
+_REGISTRY_WIDTHS = {1: 18, 2: 22, 3: 8, 4: 50, 5: 80}
+
+
+def _dated_xlsx_path(base_dir, date_prefix):
+    """Путь к per-date реестру: Registered/YYYY-MM-DD_резолюции.xlsx.
+    Если date_prefix=None → _unknown_резолюции.xlsx (fallback)."""
+    registered_dir = os.path.join(base_dir, "Registered")
+    os.makedirs(registered_dir, exist_ok=True)
+    name = (date_prefix or "_unknown") + "_резолюции.xlsx"
+    return os.path.join(registered_dir, name)
+
+
+def _ensure_dated_xlsx(path):
+    """Создаёт per-date xlsx с шапкой если не существует."""
+    if os.path.isfile(path):
+        return
+    try:
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Резолюции"
+        ws.append(_REGISTRY_HEADERS)
+        for c in range(1, len(_REGISTRY_HEADERS) + 1):
+            ws.cell(row=1, column=c).font = openpyxl.styles.Font(bold=True)
+        for col, w in _REGISTRY_WIDTHS.items():
+            ws.column_dimensions[
+                openpyxl.utils.get_column_letter(col)].width = w
+        ws.freeze_panes = "A2"
+        wb.save(path)
+    except Exception as e:
+        log.warning(f"Не удалось создать {path}: {e}")
+
+
+def _append_dated_row(path, doc, asud_id):
+    """Дописывает строку в per-date xlsx.
+    Колонки: Номер | Link | Округ | Subject | Body
+    """
+    try:
+        wb = openpyxl.load_workbook(path)
+        ws = wb.active
+        ws.append([
+            asud_id or "",
+            doc.get("link") or "",
+            doc.get("округ_прогноз") or "",
+            doc.get("тема") or "",
+            doc.get("содержание") or "",  # уже _clean_body
+        ])
+        wb.save(path)
+    except Exception as e:
+        log.warning(f"Не удалось записать строку в {path}: {e}")
 
 
 def load_emails(folder_path):
@@ -119,6 +185,15 @@ def load_emails(folder_path):
             corr_found = False
             correspondent = unknown
 
+        # Округ — пред-парсим один раз тут, чтобы потом писать в реестр
+        # без повторного парсинга. None если не нашли — пустая ячейка.
+        try:
+            okrug = okrug_from_textbody(body_clean,
+                                         base_dir_fn=cfg.get_base_dir)
+        except Exception as e:
+            log.warning(f"okrug_parser упал для {os.path.basename(msg_path)}: {e}")
+            okrug = None
+
         rows.append({
             "row_idx": idx,
             "содержание": body_clean,
@@ -130,6 +205,8 @@ def load_emails(folder_path):
             "тип_название": type_name,
             "link": link,
             "файл": msg_path,  # сам .msg прикрепляется как content
+            "округ_прогноз": okrug,
+            "msg_date_prefix": _msg_date_prefix(msg_path),
         })
 
     log.info(f"Загружено: {len(rows)} писем, пропущено: {skipped}")
@@ -206,21 +283,17 @@ def main():
         driver.get(url)
         wait_asud_loaded(driver)
 
-        # Output xlsx — имя из имени папки писем
-        folder_name = os.path.basename(os.path.normpath(folder)) or "email"
-        registered_dir = os.path.join(base_dir, "Registered")
-        os.makedirs(registered_dir, exist_ok=True)
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_path = os.path.join(registered_dir,
-            f"{folder_name}_{ts}_резолюции.xlsx")
-        mix_flow._ensure_output_xlsx(output_path)
-        log.info(f"Output xlsx: {output_path}")
+        # Per-date реестры: Registered/YYYY-MM-DD_резолюции.xlsx.
+        # Каждый doc пишется в xlsx своей даты (из имени .msg).
+        log.info(f"Per-date реестры в: {os.path.join(base_dir, 'Registered')}")
 
         done_count, err_count = 0, 0
         for i, doc in enumerate(docs, 1):
             try:
                 asud_id = mix_flow.create_one_document(driver, doc, i, len(docs))
-                mix_flow._append_output_row(output_path, doc, asud_id)
+                xlsx_path = _dated_xlsx_path(base_dir, doc.get("msg_date_prefix"))
+                _ensure_dated_xlsx(xlsx_path)
+                _append_dated_row(xlsx_path, doc, asud_id)
                 done_count += 1
             except Exception as e:
                 log.error(f"ОШИБКА документ {i}: {e}")
