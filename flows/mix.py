@@ -808,8 +808,16 @@ def close_card_and_wait_main(driver):
 
 # ================= DOCUMENT FLOW =================
 
+# Статус последнего create_one_document — читают вызывающие (email-flow и т.п.),
+# чтобы решить куда переместить .msg (Завершено / Ошибки / оставить).
+# Значения: 'OK' | 'DUPLICATE' | 'DRAFT' | 'FAILED'.
+# 'FAILED' — дефолт; перетирается в успешных путях.
+_last_result = {"status": "UNKNOWN"}
+
+
 def create_one_document(driver, doc_data, index, total):
     """Создаёт один входящий документ."""
+    _last_result["status"] = "FAILED"
     log.info(f"{'='*50}")
     log.info(f"ДОКУМЕНТ {index}/{total}: {doc_data['тема'][:60]}")
     log.info(f"Корреспондент: {doc_data['корреспондент']} "
@@ -864,6 +872,7 @@ def create_one_document(driver, doc_data, index, total):
         if is_duplicate_warning(driver):
             log.warning(f"Документ {index}/{total}: АСУД говорит УЖЕ ЗАРЕГИСТРИРОВАН — пропускаю")
             close_open_modals(driver)
+            _last_result["status"] = "DUPLICATE"
             return None  # caller увидит None и не запишет в output
         # Ждём кнопку 'Зарегистрировать' — признак что save прошёл и форма ушла в режим регистрации
         try:
@@ -899,11 +908,13 @@ def create_one_document(driver, doc_data, index, total):
         # Черновики НЕ переносим: файл нужен для ручной доработки.
         if attach_path and attach_path != dummy_path:
             move_to_done(attach_path, outlook_dir)
+        _last_result["status"] = "OK" if asud_id else "FAILED"
     else:
         log.warning(f"Row {doc_data['row_idx']}: ФИО НЕ найдено — "
                     f"оставляю в ЧЕРНОВИКАХ для ручной доработки "
                     f"(тема: {doc_data['тема'][:60]}). "
                     f"Файл НЕ перемещаю — лежит на месте.")
+        _last_result["status"] = "DRAFT"
 
     close_card_and_wait_main(driver)
     return asud_id

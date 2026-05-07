@@ -169,6 +169,47 @@ def move_to_done(file_path, outlook_dir, done_dirname="Завершено"):
         log.warning(f"Не удалось переместить {name}: {e}")
 
 
+def move_to_errors(file_path, base_dir, reason="", err_dirname="Ошибки"):
+    """Перемещает .msg в <base_dir>/Ошибки/ и пишет рядом .txt с причиной.
+    Папка создаётся если нет. Конфликт имён → суффикс _HHMMSS.
+    Ничего не делает если file_path пустой/не существует.
+    """
+    if not file_path or not os.path.isfile(file_path):
+        return
+    if not base_dir or not os.path.isdir(base_dir):
+        log.warning(f"base_dir '{base_dir}' не существует — "
+                    f"не перемещаю {os.path.basename(file_path)}")
+        return
+
+    err_dir = os.path.join(base_dir, err_dirname)
+    try:
+        os.makedirs(err_dir, exist_ok=True)
+    except Exception as e:
+        log.warning(f"Не удалось создать {err_dir}: {e}")
+        return
+
+    name = os.path.basename(file_path)
+    dest = os.path.join(err_dir, name)
+    if os.path.exists(dest):
+        base, ext = os.path.splitext(name)
+        ts = datetime.now().strftime("%H%M%S")
+        dest = os.path.join(err_dir, f"{base}_{ts}{ext}")
+
+    try:
+        import shutil
+        shutil.move(file_path, dest)
+        log.info(f"→ Ошибки/{os.path.basename(dest)}")
+        if reason:
+            sidecar = os.path.splitext(dest)[0] + ".txt"
+            try:
+                with open(sidecar, "w", encoding="utf-8") as f:
+                    f.write(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n{reason}\n")
+            except Exception as e:
+                log.debug(f"sidecar не записан: {e}")
+    except Exception as e:
+        log.warning(f"Не удалось переместить {name} в Ошибки: {e}")
+
+
 _DIAG_BUTTONS_JS = r"""
 // Диагностика: вернуть видимые кандидаты на confirm-кнопку
 const out = [];

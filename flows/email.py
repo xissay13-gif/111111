@@ -26,6 +26,7 @@ from shared import config as cfg
 from shared.ui import wait_asud_loaded
 from shared.correspondent import extract_fio_from_text
 from shared.okrug_parser import okrug_from_textbody
+from shared.attachments import move_to_done, move_to_errors
 
 # Переиспользуем создание/регистрацию/output из mix
 from flows import mix as mix_flow
@@ -287,16 +288,33 @@ def main():
         # Каждый doc пишется в xlsx своей даты (из имени .msg).
         log.info(f"Per-date реестры в: {os.path.join(base_dir, 'Registered')}")
 
-        done_count, err_count = 0, 0
+        done_count, dup_count, draft_count, err_count = 0, 0, 0, 0
         for i, doc in enumerate(docs, 1):
+            msg_path = doc.get("файл")
             try:
                 asud_id = mix_flow.create_one_document(driver, doc, i, len(docs))
-                xlsx_path = _dated_xlsx_path(base_dir, doc.get("msg_date_prefix"))
-                _ensure_dated_xlsx(xlsx_path)
-                _append_dated_row(xlsx_path, doc, asud_id)
-                done_count += 1
+                status = mix_flow._last_result.get("status", "FAILED")
+
+                if status == "OK":
+                    xlsx_path = _dated_xlsx_path(base_dir, doc.get("msg_date_prefix"))
+                    _ensure_dated_xlsx(xlsx_path)
+                    _append_dated_row(xlsx_path, doc, asud_id)
+                    move_to_done(msg_path, folder)
+                    done_count += 1
+                elif status == "DUPLICATE":
+                    log.info(f"Документ {i}: уже зарегистрирован — .msg в Завершено/")
+                    move_to_done(msg_path, folder)
+                    dup_count += 1
+                elif status == "DRAFT":
+                    # ФИО не найдено — оставляем в корне для ручной доработки.
+                    draft_count += 1
+                else:  # FAILED
+                    move_to_errors(msg_path, folder,
+                                   f"Регистрация не удалась (status={status})")
+                    err_count += 1
             except Exception as e:
                 log.error(f"ОШИБКА документ {i}: {e}")
+                move_to_errors(msg_path, folder, f"Exception: {e}")
                 err_count += 1
                 try:
                     driver.get(url)
@@ -313,9 +331,10 @@ def main():
             "",
             "=" * 60,
             "ГОТОВО!",
-            f"  Обработано:   {done_count} / {len(docs)}",
-            f"  Ошибок:       {err_count}",
-            f"  В черновиках: {unknown_n}",
+            f"  Обработано:   {done_count} / {len(docs)}  (→ Завершено/)",
+            f"  Дубликаты:    {dup_count}  (уже были в АСУД, → Завершено/)",
+            f"  В черновиках: {draft_count}  (ФИО не найдено, .msg остался в корне)",
+            f"  Ошибок:       {err_count}  (→ Ошибки/)",
             f"  Затрачено:    {elapsed}" + (f"  (в среднем {avg}/док)" if avg else ""),
             "=" * 60,
         ]
