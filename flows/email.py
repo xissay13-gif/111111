@@ -60,8 +60,8 @@ def _msg_link(msg, file_path):
 
 
 def load_emails(folder_path):
-    """Рекурсивно обходит folder_path, парсит каждый .msg в формат
-    doc_data что ожидает mix.create_one_document.
+    """Берёт .msg ТОЛЬКО из корня folder_path (без рекурсии в подпапки).
+    Подпапки типа 'Завершено' не должны попадать в работу.
 
     Возвращает list of dicts с теми же полями что mix.load_excel.
     """
@@ -72,10 +72,14 @@ def load_emails(folder_path):
         type_idx, "Письма, заявления и жалобы граждан, акционеров")
 
     msg_files = []
-    for root, _, files in os.walk(folder_path):
-        for f in files:
-            if f.lower().endswith('.msg'):
-                msg_files.append(os.path.join(root, f))
+    try:
+        for f in os.listdir(folder_path):
+            full = os.path.join(folder_path, f)
+            if os.path.isfile(full) and f.lower().endswith('.msg'):
+                msg_files.append(full)
+    except OSError as e:
+        log.error(f"Не могу прочитать папку {folder_path}: {e}")
+        return []
 
     log.info(f"Найдено .msg файлов: {len(msg_files)}")
 
@@ -149,7 +153,7 @@ def main():
     folder = os.environ.get('ASUD_EMAIL_FOLDER')
     if not folder:
         default = settings.get("email_folder", "")
-        print(f"\nПапка с .msg-письмами (поиск рекурсивно по подпапкам).")
+        print(f"\nПапка с .msg-письмами (только из корня папки, подпапки игнорируются).")
         if default:
             print(f"Enter — использовать: {default}")
         user_dir = input("Путь: ").strip().strip('"').strip("'")
