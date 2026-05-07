@@ -666,6 +666,30 @@ def register_and_resolve(driver, index, total):
         time.sleep(1)
 
     if yes_btn:
+        # Helper: re-find yes_btn freshly чтобы обойти stale element после
+        # перерисовки GXT-диалога между нашими click-стратегиями.
+        def _refind_yes():
+            try:
+                b = driver.find_element(By.ID, "confirm_dialog_btn_yes")
+                if b.is_displayed():
+                    return b
+            except Exception:
+                pass
+            try:
+                b = driver.find_element(By.CSS_SELECTOR,
+                    "[id*='confirm_dialog_btn_yes'], [id*='confirm'][id*='yes']")
+                if b.is_displayed():
+                    return b
+            except Exception:
+                pass
+            try:
+                for b in driver.find_elements(By.XPATH, "//*[normalize-space(text())='Да']"):
+                    if b.is_displayed():
+                        return b
+            except Exception:
+                pass
+            return None
+
         try:
             driver.execute_script("arguments[0].scrollIntoView({block:'center'});", yes_btn)
             time.sleep(0.3)
@@ -674,37 +698,41 @@ def register_and_resolve(driver, index, total):
         clicked = False
         # 1) ActionChains
         try:
-            ActionChains(driver).move_to_element(yes_btn).pause(0.3).click().perform()
-            log.info(f"Клик 'Да' (ActionChains): id={yes_btn.get_attribute('id')}")
+            fresh = _refind_yes() or yes_btn
+            ActionChains(driver).move_to_element(fresh).pause(0.3).click().perform()
+            log.info(f"Клик 'Да' (ActionChains): id={fresh.get_attribute('id')}")
             clicked = True
         except Exception as e:
-            log.info(f"ActionChains 'Да' не сработал: {e}")
+            log.debug(f"ActionChains 'Да' не сработал (попробую другие): {type(e).__name__}")
         # 2) JS
         if not clicked:
             try:
-                driver.execute_script("arguments[0].click();", yes_btn)
+                fresh = _refind_yes() or yes_btn
+                driver.execute_script("arguments[0].click();", fresh)
                 log.info("Клик 'Да' (JS)")
                 clicked = True
             except Exception as e:
-                log.info(f"JS 'Да' не сработал: {e}")
+                log.debug(f"JS 'Да' не сработал: {type(e).__name__}")
         # 3) Нативный
         if not clicked:
             try:
-                yes_btn.click()
+                fresh = _refind_yes() or yes_btn
+                fresh.click()
                 log.info("Клик 'Да' (native)")
                 clicked = True
             except Exception as e:
-                log.info(f"Native 'Да' не сработал: {e}")
-        # 4) Enter — GWT-диалоги часто принимают его
-        if clicked:
-            try:
-                ActionChains(driver).send_keys(Keys.ENTER).perform()
-            except Exception:
-                pass
-        # Ждём пока модалка закроется (диалог 'Да' уйдёт из DOM)
+                log.debug(f"Native 'Да' не сработал: {type(e).__name__}")
+        # 4) Enter — GWT-диалоги часто принимают его (отправляем независимо
+        # от clicked: если кнопка stale всё равно может закрыть диалог)
+        try:
+            ActionChains(driver).send_keys(Keys.ENTER).perform()
+        except Exception:
+            pass
+        # Ждём пока модалка закроется (диалог 'Да' уйдёт из DOM).
+        # НЕ используем visibility_of(yes_btn) — там тот же stale ref.
         try:
             WebDriverWait(driver, 5).until_not(
-                EC.visibility_of(yes_btn))
+                lambda d: bool(_refind_yes()))
         except Exception:
             pass
         log.info(f"Документ {index}/{total} НА РЕЗОЛЮЦИИ")
