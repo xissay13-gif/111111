@@ -328,10 +328,10 @@ def _attach_via_input(driver, file_path):
         driver.execute_script(
             "arguments[0].dispatchEvent(new Event('change',{bubbles:true}));", inp)
 
-        # 5б. Даём АСУД ~1.5s на серверный upload (файл уже в input, но
-        # сервер обрабатывает его асинхронно). Без этой паузы confirm-клик
-        # часто опережает upload.
-        time.sleep(1.5)
+        # 5б. Даём АСУД 4s на серверный upload. На некоторых документах
+        # 1.5s было мало — upload не успевал, confirm кликался впустую,
+        # ждали 30s+ retry-cycle. 4s покрывает ~95% случаев одной попыткой.
+        time.sleep(4)
 
         log.info(f"Файл отправлен через CDP-intercept + send_keys")
         return True
@@ -363,20 +363,30 @@ def _wait_confirm_and_click(driver, timeout=30):
     end = time.time() + timeout
 
     def _find_btn():
+        # Только confirm-кнопки С НЕПУСТЫМ id-маркером SetContent/Send/Submit.
+        # Без id или с пустым id — это может быть главная кнопка 'Присоединить
+        # содержимое' на карточке документа, кликать её — открывать picker (если
+        # бы intercept был выкл) или по крайней мере бессмысленно.
         try:
             btns = driver.find_elements(By.CSS_SELECTOR,
                 "[id*='SetContent'], [id*='Send'], [id*='Submit']")
             for b in btns:
-                if b.is_displayed():
+                if b.is_displayed() and b.get_attribute('id'):
                     return b
         except Exception:
             pass
+        # Fallback: text-search ВНУТРИ открытой модалки (не на карточке)
         try:
-            btns = driver.find_elements(By.XPATH,
-                "//button[contains(text(),'Присоединить')] | //div[contains(text(),'Присоединить')]")
-            visible = [b for b in btns if b.is_displayed()]
-            if visible:
-                return visible[-1]
+            modals = driver.find_elements(By.CSS_SELECTOR,
+                "div[class*='ModalPanel'][class*='panel']")
+            for modal in modals:
+                if not modal.is_displayed():
+                    continue
+                btns = modal.find_elements(By.XPATH,
+                    ".//button[contains(text(),'Присоединить')] | .//div[contains(text(),'Присоединить')]")
+                for b in btns:
+                    if b.is_displayed():
+                        return b
         except Exception:
             pass
         return None
