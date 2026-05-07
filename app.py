@@ -97,6 +97,16 @@ def pick_mode(xlsx_path):
         return auto
 
 
+def pick_source():
+    """Интерактивный верхне-уровневый выбор: реестр (xlsx) или папка с .msg.
+    Вызывается когда юзер не передал ни --mode, ни --xlsx, ни --folder."""
+    print("\nЧто обработать?")
+    print("  1. Реестр (.xlsx)        — режимы mix / auto-create / smart")
+    print("  2. Папку с .msg-письмами — режим email")
+    choice = input("Номер (1-2) [1]: ").strip()
+    return 'email' if choice == '2' else 'xlsx'
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="АСУД ИК — автоматизация документооборота")
@@ -114,19 +124,28 @@ def main():
         os.environ['ASUD_HEADLESS'] = '1'
         log.info("Режим: HEADLESS (Edge без GUI)")
 
-    # === EMAIL-режим: --folder=... или --mode=email ==========================
+    # === Определяем источник: email vs xlsx =================================
     if args.folder or args.mode == 'email':
+        source = 'email'
+    elif args.xlsx or args.mode in ('mix', 'auto-create', 'smart'):
+        source = 'xlsx'
+    else:
+        # Ничего не указано — спрашиваем
+        source = pick_source()
+
+    # === EMAIL-источник =====================================================
+    if source == 'email':
         if args.folder:
             os.environ['ASUD_EMAIL_FOLDER'] = args.folder
             log.info(f"Режим: email (папка: {args.folder})")
         else:
-            log.info("Режим: email (через --mode=email)")
+            log.info("Режим: email")
         os.environ['ASUD_MODE'] = 'email'
         from flows.email import main as flow_main
         flow_main()
         return
 
-    # === XLSX-режимы: mix / auto-create / smart ==============================
+    # === XLSX-источник: mix / auto-create / smart ===========================
     # Если xlsx не указан — выбираем интерактивно
     xlsx_path = args.xlsx
     if not xlsx_path:
@@ -165,8 +184,6 @@ def main():
         from flows.auto_create import main as flow_main
     elif mode == 'smart':
         from flows.smart import main as flow_main
-    elif mode == 'email':
-        from flows.email import main as flow_main
     else:
         log.error(f"Неизвестный режим: {mode}")
         sys.exit(1)
