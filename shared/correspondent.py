@@ -446,14 +446,60 @@ def create_correspondent(driver, person_name):
         close_open_modals(driver)
 
 
+_READ_CORRESPONDENT_JS = r"""
+// Читает все возможные представления поля 'Корреспондент':
+//   1. value входных input'ов рядом с label
+//   2. textContent любых видимых div/span/td рядом с label (на случай если
+//      GXT кладёт ФИО в read-only display-элемент, а наш input очищен)
+const labelText = arguments[0];
+const xp = `//*[normalize-space(text())='${labelText}']`;
+const snap = document.evaluate(xp, document, null,
+    XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
+const collected = [];
+for (let i = 0; i < snap.snapshotLength; i++) {
+    const label = snap.snapshotItem(i);
+    if (!label.offsetParent) continue;
+    let parent = label;
+    for (let level = 1; level <= 6; level++) {
+        parent = parent.parentElement;
+        if (!parent) break;
+        // Все видимые input.value
+        for (const inp of parent.querySelectorAll("input")) {
+            if (inp.offsetParent && inp.value) {
+                collected.push(inp.value.trim());
+            }
+        }
+        // Все видимые div/span/td с текстом
+        for (const el of parent.querySelectorAll("div, span, td")) {
+            if (!el.offsetParent) continue;
+            // Только если у элемента нет дочерних input/div
+            // (то есть он 'leaf' с текстом)
+            if (el.children.length === 0) {
+                const t = (el.textContent || '').trim();
+                if (t.length > 2 && t.length < 200) {
+                    collected.push(t);
+                }
+            }
+        }
+    }
+}
+return collected;
+"""
+
+
 def _correspondent_field_value(driver):
-    """Читает текущее значение поля 'Корреспондент' (для пост-верификации)."""
+    """Читает текущее значение поля 'Корреспондент' (для пост-верификации).
+
+    Возвращает строку — конкатенация всех видимых input.value и текстов
+    рядом с label 'Корреспондент'. После click GXT иногда сбрасывает наш
+    typing-input и кладёт полное ФИО в read-only display-элемент. Чтобы
+    верификация это видела — собираем ВСЁ что лежит рядом с label.
+    """
     try:
-        inp = find_input_near_label(driver, "Корреспондент")
-        if not inp:
+        values = driver.execute_script(_READ_CORRESPONDENT_JS, "Корреспондент")
+        if not values:
             return ""
-        val = (inp.get_attribute('value') or '').strip()
-        return val
+        return " | ".join(values)
     except Exception:
         return ""
 
