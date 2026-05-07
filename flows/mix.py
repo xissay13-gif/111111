@@ -744,13 +744,24 @@ def register_and_resolve(driver, index, total):
 def close_card_and_wait_main(driver):
     """Закрывает карточку и ждёт главную страницу.
 
-    В DOM может быть несколько элементов с id='header-close-btn' (скрытые
-    модалки/карточки) — берём ПЕРВЫЙ ВИДИМЫЙ, иначе клик уходит в скрытый
-    элемент и карточка остаётся открытой. Если ни один не видим — пробуем
-    ESC как лёгкий fallback перед тяжёлым reload.
-    """
-    closed = False
+    После 'На резолюцию + Да' ASUD сам закрывает карточку — pre-check
+    на видимый mainscreen-create-button даёт быстрый выход без лишних
+    кликов/ESC.
 
+    Иначе (черновик, ошибка): в DOM может быть несколько элементов с
+    id='header-close-btn' (скрытые модалки), берём первый видимый.
+    Если ни один не видим — пробуем ESC. Reload — последняя страховка.
+    """
+    # Быстрый путь: главная уже на экране (типично после 'На резолюцию')
+    try:
+        main_btn = driver.find_element(By.ID, "mainscreen-create-button")
+        if main_btn.is_displayed():
+            log.info("Главная уже на экране (карточка закрылась автоматически)")
+            return
+    except Exception:
+        pass
+
+    closed = False
     try:
         candidates = driver.find_elements(By.ID, "header-close-btn")
     except Exception:
@@ -777,9 +788,8 @@ def close_card_and_wait_main(driver):
                 continue
 
     if not closed:
-        # Видимого header-close-btn нет — возможно карточка реально уже закрыта,
-        # либо ASUD рендерит её в нестандартном состоянии. ESC — дёшево и часто
-        # помогает, GXT-карточки на него реагируют.
+        # Видимого header-close-btn нет — пробуем ESC, GXT-карточки часто
+        # на него реагируют.
         try:
             ActionChains(driver).send_keys(Keys.ESCAPE).perform()
             log.debug("Карточка: попытка закрытия через ESC")
