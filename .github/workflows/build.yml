@@ -2,7 +2,7 @@ name: Build АСУД EXE
 
 on:
   push:
-    branches: [ main, background-mode, email-direct ]
+    branches: [ main, background-mode, email-direct, email-daemon ]
   workflow_dispatch:
 
 jobs:
