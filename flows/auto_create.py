@@ -368,7 +368,7 @@ def capture_asud_id(driver, timeout=15):
     return None
 
 
-def _post_register_check(driver, timeout=8):
+def _post_register_check(driver, timeout=5):
     """После клика 'Зарегистрировать' проверяет что регистрация СОСТОЯЛАСЬ:
     'На резолюцию' должна стать видимой И НЕ disabled. Если нет — клик ушёл вхолостую.
     Возвращает элемент res_btn если успех, None если регистрация не сработала."""
@@ -405,7 +405,7 @@ def register_and_resolve(driver, index, total):
         click(driver, btn, "Зарегистрировать")
 
         # Verify: 'На резолюцию' стала enabled? Если нет — повтор клика
-        res_btn = _post_register_check(driver, timeout=8)
+        res_btn = _post_register_check(driver, timeout=5)
         if not res_btn:
             log.warning(f"Документ {index}/{total}: клик 'Зарегистрировать' не дал эффекта — повторяю")
             close_open_modals(driver)
@@ -413,7 +413,7 @@ def register_and_resolve(driver, index, total):
                 btn = driver.find_element(By.CSS_SELECTOR,
                     "#header-action-btn-register, [id*='header-action-btn-register']")
                 click(driver, btn, "Зарегистрировать (retry)")
-                res_btn = _post_register_check(driver, timeout=8)
+                res_btn = _post_register_check(driver, timeout=5)
             except Exception as e:
                 log.error(f"Retry клик упал: {e}")
             if not res_btn:
@@ -424,7 +424,7 @@ def register_and_resolve(driver, index, total):
         try:
             btn = driver.find_element(By.XPATH, "//div[contains(text(),'Зарегистрировать')]")
             click(driver, btn, "Зарегистрировать (fallback)")
-            res_btn = _post_register_check(driver, timeout=8)
+            res_btn = _post_register_check(driver, timeout=5)
             if res_btn:
                 registered = True
         except Exception as e:
@@ -434,8 +434,9 @@ def register_and_resolve(driver, index, total):
         return None
 
     # res_btn уже получен из _post_register_check выше — не ждём заново.
-    # DOM готов — захват номера до 3s
-    asud_id = capture_asud_id(driver, timeout=3)
+    # Захват номера до 1.5s — если за это время не появился, идём дальше
+    # (регистрация прошла, в xlsx запишем пусто но flow не ломается).
+    asud_id = capture_asud_id(driver, timeout=1.5)
     if asud_id:
         log.info(f"Документ {index}/{total} ЗАРЕГИСТРИРОВАН: {asud_id}")
     else:
