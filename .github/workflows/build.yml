@@ -2,7 +2,7 @@ name: Build АСУД EXE
 
 on:
   push:
-    branches: [ main, background-mode ]
+    branches: [ main, background-mode, email-direct ]
   workflow_dispatch:
 
 jobs:
@@ -18,7 +18,7 @@ jobs:
         python-version: '3.12'
 
     - name: Install dependencies
-      run: pip install selenium openpyxl pyinstaller
+      run: pip install selenium openpyxl pyinstaller extract-msg
 
     - name: Build EXE
       run: >
@@ -31,6 +31,7 @@ jobs:
         --hidden-import=selenium.webdriver.support.ui
         --hidden-import=selenium.webdriver.support.expected_conditions
         --hidden-import=openpyxl
+        --hidden-import=extract_msg
         --hidden-import=shared.config
         --hidden-import=shared.ui
         --hidden-import=shared.correspondent
@@ -39,6 +40,7 @@ jobs:
         --hidden-import=flows.mix
         --hidden-import=flows.auto_create
         --hidden-import=flows.smart
+        --hidden-import=flows.email
         app.py
 
     - name: Copy headless launcher
