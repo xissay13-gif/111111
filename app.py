@@ -6,6 +6,8 @@ app.py — Единая точка входа для АСУД-автоматиз
   • auto-create — создание + регистрация + На резолюцию (без .msg по Link)
   • smart       — создание ТОЛЬКО как черновик + .msg по Link (без регистрации,
                   корреспондент = «Неизвестный Неизвестный Неизвестный»)
+  • email       — создание прямо из .msg-писем (без xlsx-реестра): рекурсивно
+                  обходит папку, парсит письма, ФИО абонента берёт из тела.
 
 Выдача резолюций — отдельный exe, ветка clean-resolutions.
 
@@ -14,10 +16,13 @@ app.py — Единая точка входа для АСУД-автоматиз
   python app.py --mode=mix
   python app.py --mode=auto-create
   python app.py --mode=smart
+  python app.py --mode=email
   python app.py --xlsx=path.xlsx --mode=...
+  python app.py --folder=path         # → авто-режим email
   python app.py --headless            # фоновый режим (Edge без GUI)
 
 Auto-detect:
+  • Передан --folder или --mode=email                         → email
   • Лист содержит колонку 'Link' (старый mix-формат)          → mix
   • Лист 'результат' (новый формат) или Subject/корреспондент → auto-create
   Smart НЕ определяется автоматически (тот же xlsx что у mix), нужен --mode=smart
@@ -45,8 +50,9 @@ _MODE_DESCRIPTIONS = {
     'mix':         'Создание + регистрация + На резолюцию + .msg по Link',
     'auto-create': 'Создание + регистрация + На резолюцию (без .msg)',
     'smart':       'Создание как черновик + .msg (без регистрации, фикс. корреспондент)',
+    'email':       'Создание прямо из .msg-писем (без xlsx-реестра)',
 }
-_MODES = ['mix', 'auto-create', 'smart']
+_MODES = ['mix', 'auto-create', 'smart', 'email']
 
 
 def detect_mode(xlsx_path):
@@ -71,19 +77,21 @@ def detect_mode(xlsx_path):
 
 
 def pick_mode(xlsx_path):
-    """Интерактивный выбор режима с подсказкой auto-detect."""
+    """Интерактивный выбор режима с подсказкой auto-detect.
+    Email-режим в этом меню не показываем — он работает с папкой, не с xlsx."""
+    xlsx_modes = [m for m in _MODES if m != 'email']
     auto = detect_mode(xlsx_path)
     print(f"\nРеестр: {os.path.basename(xlsx_path)}")
     print("Какой процесс запустить?")
-    for i, m in enumerate(_MODES, 1):
+    for i, m in enumerate(xlsx_modes, 1):
         marker = '  ← рекомендую (auto-detect)' if m == auto else ''
         print(f"  {i}. {m:11} — {_MODE_DESCRIPTIONS[m]}{marker}")
     print(f"\n[Enter] = {auto}  (рекомендуется по реестру)")
-    choice = input("Номер режима (1-3) или Enter: ").strip()
+    choice = input(f"Номер режима (1-{len(xlsx_modes)}) или Enter: ").strip()
     if not choice:
         return auto
     try:
-        return _MODES[int(choice) - 1]
+        return xlsx_modes[int(choice) - 1]
     except (ValueError, IndexError):
         log.warning(f"Неверный выбор '{choice}' — использую {auto}")
         return auto
@@ -92,9 +100,10 @@ def pick_mode(xlsx_path):
 def main():
     parser = argparse.ArgumentParser(
         description="АСУД ИК — автоматизация документооборота")
-    parser.add_argument('--mode', choices=['mix', 'auto-create', 'smart'],
+    parser.add_argument('--mode', choices=_MODES,
                         help="Режим работы (если не задан — auto-detect по xlsx)")
     parser.add_argument('--xlsx', help="Путь к реестру (если не задан — спрашиваем)")
+    parser.add_argument('--folder', help="Папка с .msg-письмами (включает режим email)")
     parser.add_argument('--headless', action='store_true',
                         help="Запустить Edge без GUI (фоновый режим, требует Стадии 1б)")
     args = parser.parse_args()
@@ -105,6 +114,19 @@ def main():
         os.environ['ASUD_HEADLESS'] = '1'
         log.info("Режим: HEADLESS (Edge без GUI)")
 
+    # === EMAIL-режим: --folder=... или --mode=email ==========================
+    if args.folder or args.mode == 'email':
+        if args.folder:
+            os.environ['ASUD_EMAIL_FOLDER'] = args.folder
+            log.info(f"Режим: email (папка: {args.folder})")
+        else:
+            log.info("Режим: email (через --mode=email)")
+        os.environ['ASUD_MODE'] = 'email'
+        from flows.email import main as flow_main
+        flow_main()
+        return
+
+    # === XLSX-режимы: mix / auto-create / smart ==============================
     # Если xlsx не указан — выбираем интерактивно
     xlsx_path = args.xlsx
     if not xlsx_path:
@@ -143,6 +165,8 @@ def main():
         from flows.auto_create import main as flow_main
     elif mode == 'smart':
         from flows.smart import main as flow_main
+    elif mode == 'email':
+        from flows.email import main as flow_main
     else:
         log.error(f"Неизвестный режим: {mode}")
         sys.exit(1)
