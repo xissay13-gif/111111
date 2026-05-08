@@ -169,6 +169,35 @@ def move_to_done(file_path, outlook_dir, done_dirname="Завершено"):
         log.warning(f"Не удалось переместить {name}: {e}")
 
 
+def move_to_drafts(file_path, base_dir, drafts_dirname="Черновики"):
+    """Перемещает .msg в <base_dir>/Черновики/ — для daemon-режима, чтобы
+    не подхватывать снова в следующей итерации. Юзер при необходимости
+    вернёт обратно после ручной правки.
+    """
+    if not file_path or not os.path.isfile(file_path):
+        return
+    if not base_dir or not os.path.isdir(base_dir):
+        return
+    drafts_dir = os.path.join(base_dir, drafts_dirname)
+    try:
+        os.makedirs(drafts_dir, exist_ok=True)
+    except Exception as e:
+        log.warning(f"Не удалось создать {drafts_dir}: {e}")
+        return
+    name = os.path.basename(file_path)
+    dest = os.path.join(drafts_dir, name)
+    if os.path.exists(dest):
+        base, ext = os.path.splitext(name)
+        ts = datetime.now().strftime("%H%M%S")
+        dest = os.path.join(drafts_dir, f"{base}_{ts}{ext}")
+    try:
+        import shutil
+        shutil.move(file_path, dest)
+        log.info(f"→ Черновики/{os.path.basename(dest)}")
+    except Exception as e:
+        log.warning(f"Не удалось переместить {name} в Черновики: {e}")
+
+
 def move_to_errors(file_path, base_dir, reason="", err_dirname="Ошибки"):
     """Перемещает .msg в <base_dir>/Ошибки/ и пишет рядом .txt с причиной.
     Папка создаётся если нет. Конфликт имён → суффикс _HHMMSS.

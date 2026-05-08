@@ -24,6 +24,9 @@ DEFAULTS = {
     "unknown_correspondent": "Неизвестный Неизвестный Неизвестный",
     "delivery_method": "Электронная почта",
     "sheet_name": "Лист2",
+    # email-daemon (--watch)
+    "email_watch_interval_sec": 30,
+    "email_max_retries": 3,
 }
 
 # Маппинг индекса из Excel → название вида в АСУД
@@ -134,3 +137,22 @@ def build_edge_options():
     options.add_argument("--log-level=3")
     options.add_experimental_option('excludeSwitches', ['enable-logging'])
     return options
+
+
+def keep_system_awake(enabled=True):
+    """Блокирует/разблокирует Windows-таймер автосна на время процесса.
+    На Linux/macOS — no-op. Реверт автоматический при выходе процесса
+    (можно явно вызвать с enabled=False).
+    """
+    if not sys.platform.startswith('win'):
+        return
+    try:
+        import ctypes
+        ES_CONTINUOUS = 0x80000000
+        ES_SYSTEM_REQUIRED = 0x00000001
+        flags = (ES_CONTINUOUS | ES_SYSTEM_REQUIRED) if enabled else ES_CONTINUOUS
+        ctypes.windll.kernel32.SetThreadExecutionState(flags)
+        if enabled:
+            logging.getLogger("asud").info("Сон Windows заблокирован на время работы")
+    except Exception as e:
+        logging.getLogger("asud").debug(f"keep_system_awake не сработал: {e}")

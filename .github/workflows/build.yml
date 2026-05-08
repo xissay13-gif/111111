@@ -47,6 +47,7 @@ jobs:
       run: |
         copy asud_headless.bat dist\
         copy asud_email_headless.bat dist\
+        copy asud_email_watch.bat dist\
 
     - name: Upload artifact (exe + bat)
       uses: actions/upload-artifact@v4
@@ -56,3 +57,4 @@ jobs:
           dist/asud.exe
           dist/asud_headless.bat
           dist/asud_email_headless.bat
+          dist/asud_email_watch.bat

@@ -2,16 +2,18 @@
 flows/email.py — Email-direct: создание Входящих документов прямо из .msg файлов
 в указанной папке (без xlsx-реестра).
 
-Парсит каждый .msg через extract_msg, извлекает Subject/Body/Date,
-ищет ФИО абонента в теле через extract_fio_from_text, прикрепляет сам же
-.msg как content. Дальнейший flow (форма, регистрация, На резолюцию,
-output xlsx) переиспользуется из flows/mix.py.
+Два режима:
+  • main()        — однопроходный: пробежать все .msg в корне папки и выйти
+  • daemon_main() — непрерывный мониторинг: опрос папки раз в N сек,
+                     обработка новых .msg, автоперемещение по результату
+                     (Завершено / Ошибки / Черновики), Ctrl+C для остановки
 
-Запускается через app.py с --mode=email.
+Запуск через app.py с --mode=email (одноразовый) или --mode=email --watch (daemon).
 """
 
 import os
 import re
+import signal
 import sys
 import time
 import logging
@@ -26,7 +28,7 @@ from shared import config as cfg
 from shared.ui import wait_asud_loaded
 from shared.correspondent import extract_fio_from_text
 from shared.okrug_parser import okrug_from_textbody
-from shared.attachments import move_to_done, move_to_errors
+from shared.attachments import move_to_done, move_to_errors, move_to_drafts
 
 # Переиспользуем создание/регистрацию/output из mix
 from flows import mix as mix_flow
@@ -126,92 +128,126 @@ def _append_dated_row(path, doc, asud_id):
         log.warning(f"Не удалось записать строку в {path}: {e}")
 
 
-def load_emails(folder_path):
-    """Берёт .msg ТОЛЬКО из корня folder_path (без рекурсии в подпапки).
-    Подпапки типа 'Завершено' не должны попадать в работу.
+def _list_root_msgs(folder_path):
+    """Возвращает sorted list абсолютных путей к .msg в корне folder_path
+    (без рекурсии). Пустой list если папки нет / I/O ошибка."""
+    try:
+        out = []
+        for f in os.listdir(folder_path):
+            full = os.path.join(folder_path, f)
+            if os.path.isfile(full) and f.lower().endswith('.msg'):
+                out.append(full)
+        return sorted(out)
+    except OSError as e:
+        log.error(f"Не могу прочитать папку {folder_path}: {e}")
+        return []
 
-    Возвращает list of dicts с теми же полями что mix.load_excel.
-    """
+
+def _parse_one_msg(msg_path):
+    """Парсит один .msg в doc_data dict. None если не получилось/пустое.
+    Использует module-global settings."""
     unknown = settings.get("unknown_correspondent",
                             cfg.DEFAULTS["unknown_correspondent"])
     type_idx = settings.get("default_type_idx", 8)
     type_name = cfg.DOC_TYPE_MAP.get(
         type_idx, "Письма, заявления и жалобы граждан, акционеров")
 
-    msg_files = []
     try:
-        for f in os.listdir(folder_path):
-            full = os.path.join(folder_path, f)
-            if os.path.isfile(full) and f.lower().endswith('.msg'):
-                msg_files.append(full)
-    except OSError as e:
-        log.error(f"Не могу прочитать папку {folder_path}: {e}")
-        return []
+        msg = extract_msg.openMsg(msg_path)
+        subject = msg.subject or ""
+        body = msg.body or ""
+        link = _msg_link(msg, msg_path)
+        try:
+            msg.close()
+        except Exception:
+            pass
+    except Exception as e:
+        log.warning(f"Не удалось прочитать {os.path.basename(msg_path)}: {e}")
+        return None
 
+    if not body and not subject:
+        log.warning(f"Пустое письмо {os.path.basename(msg_path)} — пропускаю")
+        return None
+
+    clean_subject = re.sub(r'^(FW:|RE:|Fwd:)\s*', '',
+                            str(subject).strip(), flags=re.IGNORECASE)
+    body_clean = mix_flow._clean_body(body) if body else clean_subject
+
+    fio, fio_src = extract_fio_from_text(body_clean)
+    correspondent = fio if fio else unknown
+    corr_found = bool(fio)
+
+    try:
+        okrug = okrug_from_textbody(body_clean, base_dir_fn=cfg.get_base_dir)
+    except Exception as e:
+        log.warning(f"okrug_parser упал для {os.path.basename(msg_path)}: {e}")
+        okrug = None
+
+    return {
+        "row_idx": 1,
+        "содержание": body_clean,
+        "корреспондент": correspondent,
+        "корр_найден": corr_found,
+        "корр_источник": fio_src,
+        "тема": clean_subject,
+        "тип_индекс": type_idx,
+        "тип_название": type_name,
+        "link": link,
+        "файл": msg_path,
+        "округ_прогноз": okrug,
+        "msg_date_prefix": _msg_date_prefix(msg_path),
+    }
+
+
+def load_emails(folder_path):
+    """Парсит все .msg в корне folder_path. Возвращает list of doc dicts."""
+    msg_files = _list_root_msgs(folder_path)
     log.info(f"Найдено .msg файлов: {len(msg_files)}")
 
     rows, skipped = [], 0
-    for idx, msg_path in enumerate(sorted(msg_files), 1):
-        try:
-            msg = extract_msg.openMsg(msg_path)
-            subject = msg.subject or ""
-            body = msg.body or ""
-            link = _msg_link(msg, msg_path)
-            try:
-                msg.close()
-            except Exception:
-                pass
-        except Exception as e:
-            log.warning(f"Не удалось прочитать {os.path.basename(msg_path)}: {e}")
+    for idx, msg_path in enumerate(msg_files, 1):
+        doc = _parse_one_msg(msg_path)
+        if doc is None:
             skipped += 1
             continue
-
-        if not body and not subject:
-            log.warning(f"Пустое письмо {os.path.basename(msg_path)} — пропускаю")
-            skipped += 1
-            continue
-
-        # Очищаем subject от FW:/RE:/Fwd:
-        clean_subject = re.sub(r'^(FW:|RE:|Fwd:)\s*', '',
-                                str(subject).strip(), flags=re.IGNORECASE)
-        # Body — очищаем тем же helper'ом что в mix
-        body_clean = mix_flow._clean_body(body) if body else clean_subject
-
-        # ФИО абонента из тела письма
-        fio, fio_src = extract_fio_from_text(body_clean)
-        if fio:
-            corr_found = True
-            correspondent = fio
-        else:
-            corr_found = False
-            correspondent = unknown
-
-        # Округ — пред-парсим один раз тут, чтобы потом писать в реестр
-        # без повторного парсинга. None если не нашли — пустая ячейка.
-        try:
-            okrug = okrug_from_textbody(body_clean,
-                                         base_dir_fn=cfg.get_base_dir)
-        except Exception as e:
-            log.warning(f"okrug_parser упал для {os.path.basename(msg_path)}: {e}")
-            okrug = None
-
-        rows.append({
-            "row_idx": idx,
-            "содержание": body_clean,
-            "корреспондент": correspondent,
-            "корр_найден": corr_found,
-            "корр_источник": fio_src,
-            "тема": clean_subject,
-            "тип_индекс": type_idx,
-            "тип_название": type_name,
-            "link": link,
-            "файл": msg_path,  # сам .msg прикрепляется как content
-            "округ_прогноз": okrug,
-            "msg_date_prefix": _msg_date_prefix(msg_path),
-        })
+        doc["row_idx"] = idx
+        rows.append(doc)
 
     log.info(f"Загружено: {len(rows)} писем, пропущено: {skipped}")
     return rows
+
+
+# ================= PROCESSING ONE DOC =================
+
+def _process_doc(driver, doc, base_dir, folder, index, total, in_daemon):
+    """Обрабатывает один doc: create_one_document → ветвление по статусу
+    → запись в xlsx + перенос .msg.
+
+    Возвращает финальный статус: 'OK' | 'DUPLICATE' | 'DRAFT' | 'FAILED'.
+    in_daemon=True: DRAFT → перенос в Черновики/ (чтобы daemon не молотил
+                    его повторно). False: оставляем в корне.
+    """
+    msg_path = doc.get("файл")
+    asud_id = mix_flow.create_one_document(driver, doc, index, total)
+    status = mix_flow._last_result.get("status", "FAILED")
+
+    if status == "OK":
+        xlsx_path = _dated_xlsx_path(base_dir, doc.get("msg_date_prefix"))
+        _ensure_dated_xlsx(xlsx_path)
+        _append_dated_row(xlsx_path, doc, asud_id)
+        move_to_done(msg_path, folder)
+    elif status == "DUPLICATE":
+        log.info(f"Документ {index}: уже зарегистрирован — .msg в Завершено/")
+        move_to_done(msg_path, folder)
+    elif status == "DRAFT":
+        if in_daemon:
+            log.info(f"Документ {index}: ФИО не найдено — .msg в Черновики/")
+            move_to_drafts(msg_path, folder)
+        # one-shot: оставляем в корне как и было
+    else:  # FAILED — caller сам решает что делать (retry / move-to-errors)
+        pass
+
+    return status
 
 
 # ================= MAIN =================
@@ -220,6 +256,7 @@ def main():
     global settings
     settings = cfg.load()
     cfg.setup_file_logger("email")
+    cfg.keep_system_awake(True)
 
     log.info("=" * 50)
     log.info("АСУД ИК — Email-direct (создание из .msg-писем)")
@@ -292,21 +329,13 @@ def main():
         for i, doc in enumerate(docs, 1):
             msg_path = doc.get("файл")
             try:
-                asud_id = mix_flow.create_one_document(driver, doc, i, len(docs))
-                status = mix_flow._last_result.get("status", "FAILED")
-
+                status = _process_doc(driver, doc, base_dir, folder,
+                                       i, len(docs), in_daemon=False)
                 if status == "OK":
-                    xlsx_path = _dated_xlsx_path(base_dir, doc.get("msg_date_prefix"))
-                    _ensure_dated_xlsx(xlsx_path)
-                    _append_dated_row(xlsx_path, doc, asud_id)
-                    move_to_done(msg_path, folder)
                     done_count += 1
                 elif status == "DUPLICATE":
-                    log.info(f"Документ {i}: уже зарегистрирован — .msg в Завершено/")
-                    move_to_done(msg_path, folder)
                     dup_count += 1
                 elif status == "DRAFT":
-                    # ФИО не найдено — оставляем в корне для ручной доработки.
                     draft_count += 1
                 else:  # FAILED
                     move_to_errors(msg_path, folder,
@@ -350,7 +379,175 @@ def main():
             driver.quit()
         except Exception:
             pass
+        cfg.keep_system_awake(False)
+
+
+# ================= DAEMON MODE =================
+
+# Sigint handler — устанавливает флаг, текущий документ доделывается, потом выход.
+_stop_flag = False
+
+
+def _on_sigint(signum, frame):
+    global _stop_flag
+    if _stop_flag:
+        log.warning("Повторный Ctrl+C — выход немедленно")
+        sys.exit(130)
+    _stop_flag = True
+    log.info("Ctrl+C получен — закончу текущий документ и выйду из мониторинга")
+
+
+def _interruptible_sleep(seconds):
+    """Sleep с пробуждением по _stop_flag (проверка раз в секунду)."""
+    for _ in range(int(seconds)):
+        if _stop_flag:
+            return
+        time.sleep(1)
+
+
+def daemon_main():
+    """Непрерывный мониторинг папки: опрос раз в N сек, обработка новых .msg.
+    Ctrl+C для остановки (graceful — после текущего документа)."""
+    global settings
+    settings = cfg.load()
+    cfg.setup_file_logger("email_daemon")
+    cfg.keep_system_awake(True)
+
+    log.info("=" * 50)
+    log.info("АСУД ИК — Email-DAEMON (непрерывный мониторинг)")
+    log.info("=" * 50)
+
+    base_dir = cfg.get_base_dir()
+    interval = int(settings.get("email_watch_interval_sec",
+                                cfg.DEFAULTS["email_watch_interval_sec"]))
+    max_retries = int(settings.get("email_max_retries",
+                                    cfg.DEFAULTS["email_max_retries"]))
+
+    # Папка
+    folder = os.environ.get('ASUD_EMAIL_FOLDER')
+    if not folder:
+        default = settings.get("email_folder", "")
+        print(f"\nПапка с .msg-письмами для непрерывного мониторинга.")
+        if default:
+            print(f"Enter — использовать: {default}")
+        user_dir = input("Путь: ").strip().strip('"').strip("'")
+        folder = user_dir or default
+    if not folder or not os.path.isdir(folder):
+        log.error(f"Папка не найдена: {folder!r}")
+        input("Enter...")
+        sys.exit(1)
+
+    log.info(f"Папка: {folder}")
+    log.info(f"Опрос: каждые {interval} сек, макс retry: {max_retries}")
+    print(f"\nМониторинг включён. Ctrl+C для остановки.")
+
+    # Browser
+    driver_path = os.path.join(base_dir, "msedgedriver.exe")
+    if not os.path.exists(driver_path):
+        log.error(f"msedgedriver.exe не найден в {base_dir}")
+        input("Enter...")
+        sys.exit(1)
+
+    options = cfg.build_edge_options()
+    service = EdgeService(executable_path=driver_path)
+    driver = webdriver.Edge(service=service, options=options)
+    mix_flow.settings = settings
+
+    signal.signal(signal.SIGINT, _on_sigint)
+
+    url = settings.get("asud_url", cfg.DEFAULTS["asud_url"])
+    log.info(f"Открываю {url}")
+    driver.get(url)
+    wait_asud_loaded(driver)
+
+    # Счётчики и retry-state
+    retry_count = {}  # basename → int (фейлов подряд)
+    totals = {"OK": 0, "DUPLICATE": 0, "DRAFT": 0, "FAILED": 0, "ITER": 0}
+
+    try:
+        while not _stop_flag:
+            totals["ITER"] += 1
+            queue = _list_root_msgs(folder)
+            if not queue:
+                log.info(f"[итер. {totals['ITER']}] очередь пуста — sleep {interval}s")
+                _interruptible_sleep(interval)
+                continue
+
+            log.info(f"[итер. {totals['ITER']}] в очереди: {len(queue)}")
+            for idx, msg_path in enumerate(queue, 1):
+                if _stop_flag:
+                    break
+                name = os.path.basename(msg_path)
+
+                doc = _parse_one_msg(msg_path)
+                if doc is None:
+                    # битый/пустой .msg — сразу в Ошибки чтобы не зацикливаться
+                    move_to_errors(msg_path, folder,
+                                   "Не удалось распарсить или пустое")
+                    totals["FAILED"] += 1
+                    retry_count.pop(name, None)
+                    continue
+
+                try:
+                    status = _process_doc(driver, doc, base_dir, folder,
+                                           idx, len(queue), in_daemon=True)
+                    if status == "FAILED":
+                        retry_count[name] = retry_count.get(name, 0) + 1
+                        if retry_count[name] >= max_retries:
+                            move_to_errors(msg_path, folder,
+                                f"Регистрация не удалась за {max_retries} попыток")
+                            retry_count.pop(name, None)
+                            totals["FAILED"] += 1
+                        else:
+                            log.warning(f"{name}: фейл {retry_count[name]}/{max_retries} "
+                                        f"— оставляю в корне на следующую итерацию")
+                        try:
+                            driver.get(url)
+                            wait_asud_loaded(driver)
+                        except Exception:
+                            pass
+                    else:
+                        totals[status] = totals.get(status, 0) + 1
+                        retry_count.pop(name, None)
+                except Exception as e:
+                    log.error(f"Exception на {name}: {e}")
+                    retry_count[name] = retry_count.get(name, 0) + 1
+                    if retry_count[name] >= max_retries:
+                        move_to_errors(msg_path, folder, f"Exception: {e}")
+                        retry_count.pop(name, None)
+                        totals["FAILED"] += 1
+                    try:
+                        driver.get(url)
+                        wait_asud_loaded(driver)
+                    except Exception:
+                        pass
+
+            if _stop_flag:
+                break
+            log.info(f"  итог итер. {totals['ITER']}: "
+                     f"OK={totals['OK']} DUP={totals['DUPLICATE']} "
+                     f"DRAFT={totals['DRAFT']} FAIL={totals['FAILED']}")
+            _interruptible_sleep(interval)
+
+        log.info("=" * 60)
+        log.info("МОНИТОРИНГ ОСТАНОВЛЕН")
+        log.info(f"  Итераций:   {totals['ITER']}")
+        log.info(f"  Обработано: {totals['OK']}")
+        log.info(f"  Дубликаты:  {totals['DUPLICATE']}")
+        log.info(f"  Черновики:  {totals['DRAFT']}")
+        log.info(f"  Ошибки:     {totals['FAILED']}")
+        log.info("=" * 60)
+
+    finally:
+        try:
+            driver.quit()
+        except Exception:
+            pass
+        cfg.keep_system_awake(False)
 
 
 if __name__ == "__main__":
-    main()
+    if os.environ.get("ASUD_WATCH") == "1":
+        daemon_main()
+    else:
+        main()

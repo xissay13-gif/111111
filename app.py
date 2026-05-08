@@ -114,6 +114,9 @@ def main():
                         help="Режим работы (если не задан — auto-detect по xlsx)")
     parser.add_argument('--xlsx', help="Путь к реестру (если не задан — спрашиваем)")
     parser.add_argument('--folder', help="Папка с .msg-письмами (включает режим email)")
+    parser.add_argument('--watch', action='store_true',
+                        help="Непрерывный мониторинг папки (только email-режим). "
+                             "Ctrl+C — остановка после текущего документа")
     parser.add_argument('--headless', action='store_true',
                         help="Запустить Edge без GUI (фоновый режим, требует Стадии 1б)")
     args = parser.parse_args()
@@ -141,7 +144,12 @@ def main():
         else:
             log.info("Режим: email")
         os.environ['ASUD_MODE'] = 'email'
-        from flows.email import main as flow_main
+        if args.watch:
+            os.environ['ASUD_WATCH'] = '1'
+            log.info("Режим: WATCH (непрерывный мониторинг, Ctrl+C для остановки)")
+            from flows.email import daemon_main as flow_main
+        else:
+            from flows.email import main as flow_main
         flow_main()
         return
 
