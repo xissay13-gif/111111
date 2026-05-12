@@ -18,7 +18,7 @@ jobs:
         python-version: '3.12'
 
     - name: Install dependencies
-      run: pip install selenium openpyxl pyinstaller extract-msg
+      run: pip install selenium openpyxl pyinstaller extract-msg colorama
 
     - name: Build EXE
       run: >
@@ -32,11 +32,13 @@ jobs:
         --hidden-import=selenium.webdriver.support.expected_conditions
         --hidden-import=openpyxl
         --hidden-import=extract_msg
+        --hidden-import=colorama
         --hidden-import=shared.config
         --hidden-import=shared.ui
         --hidden-import=shared.correspondent
         --hidden-import=shared.attachments
         --hidden-import=shared.okrug_parser
+        --hidden-import=shared.colors
         --hidden-import=flows.mix
         --hidden-import=flows.auto_create
         --hidden-import=flows.smart
