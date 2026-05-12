@@ -30,16 +30,22 @@ DEFAULTS = {
     # Пресеты сценариев — список словарей с name + mode + folder.
     # Зашиты дефолтные пути для ОЭК (smart) и ТЭС (mix). Чтобы переопределить
     # без пересборки — создать settings.json рядом с exe (см. settings.json.example).
+    # output_suffix — добавляется в имя реестра, чтобы при параллельном
+    # запуске двух пресетов файлы не конфликтовали:
+    #   Registered/2026-05-12_ОЭК_резолюции.xlsx
+    #   Registered/2026-05-12_ТЭС_резолюции.xlsx
     "presets": [
         {
             "name": "ОЭК — Smart (черновики)",
             "mode": "smart",
             "folder": "D:\\OutlookSubjects\\ОЭК",
+            "output_suffix": "ОЭК",
         },
         {
             "name": "ТЭС — Mix (с регистрацией)",
             "mode": "mix",
             "folder": "D:\\OutlookSubjects\\ТЭС",
+            "output_suffix": "ТЭС",
         },
     ],
 }
