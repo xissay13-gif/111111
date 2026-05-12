@@ -47,6 +47,36 @@ start_time = time.monotonic()
 settings = {}
 
 
+# ================= ENCODING-FIX =================
+
+def _fix_mojibake(s):
+    """Эвристика: если строка похожа на CP1251 байты, прочитанные как Latin-1
+    (типичная ошибка extract_msg на некоторых .msg) — реkodируем обратно.
+
+    Triggers (все вместе):
+      - 3+ символов из диапазона U+00C0..U+00FF (Latin-1 «cyrillic-looking»)
+      - реальной кириллицы (U+0400..U+04FF) меньше чем «бракованных»
+      - после re-encode latin-1 → cp1251 реальная кириллица занимает ≥30%
+    Иначе возвращаем строку как есть.
+    """
+    if not s or not isinstance(s, str):
+        return s
+    bad = sum(1 for c in s if 0x00C0 <= ord(c) <= 0x00FF)
+    if bad < 3:
+        return s
+    cyrillic = sum(1 for c in s if 0x0400 <= ord(c) <= 0x04FF)
+    if cyrillic > bad:
+        return s
+    try:
+        candidate = s.encode('latin-1').decode('cp1251')
+        new_cyr = sum(1 for c in candidate if 0x0400 <= ord(c) <= 0x04FF)
+        if new_cyr >= len(candidate) // 3:
+            return candidate
+    except Exception:
+        pass
+    return s
+
+
 # ================= EMAIL → DOC_DATA =================
 
 # Имя .msg-файла начинается с даты-времени: '2026-05-06 10-58-43.msg'
@@ -158,8 +188,8 @@ def _parse_one_msg(msg_path):
 
     try:
         msg = extract_msg.openMsg(msg_path)
-        subject = msg.subject or ""
-        body = msg.body or ""
+        subject = _fix_mojibake(msg.subject or "")
+        body = _fix_mojibake(msg.body or "")
         link = _msg_link(msg, msg_path)
         try:
             msg.close()
@@ -321,6 +351,9 @@ def main():
     cfg.setup_file_logger("email")
     cfg.keep_system_awake(True)
 
+    # Читаем логику обработки сразу — нужно для корректного превью
+    process_mode = os.environ.get('ASUD_EMAIL_PROCESS_MODE', 'mix')
+
     log.info("=" * 50)
     log.info("АСУД ИК — Email-direct (создание из .msg-писем)")
     log.info("=" * 50)
@@ -351,15 +384,25 @@ def main():
         input("Enter...")
         sys.exit(1)
 
-    # Превью
-    known = sum(1 for d in docs if d["корр_найден"])
-    unknown_n = len(docs) - known
-    print(f"\nПервые 5:")
-    for i, d in enumerate(docs[:5], 1):
-        flag = 'OK' if d["корр_найден"] else '!!'
-        print(f"  {i}. [{d['тип_индекс']}] {flag} {d['корреспондент'][:30]} | {d['тема'][:50]}")
-    print(f"\nВсего: {len(docs)}  (ФИО: {known}, заглушка: {unknown_n})")
-    print("режим: EMAIL  —  создание + регистрация + На резолюцию + сам .msg как вложение")
+    # Превью — зависит от process_mode
+    if process_mode == "smart":
+        print(f"\nПервые 5 (все будут созданы как ЧЕРНОВИКИ):")
+        for i, d in enumerate(docs[:5], 1):
+            print(f"  {i}. [тип {d['тип_индекс']}] {d['тема'][:60]}")
+        print(f"\nВсего: {len(docs)}  (тип определён классификатором, "
+              f"корреспондент будет «Неизвестный...»)")
+        print("режим: EMAIL/SMART  —  создание ТОЛЬКО как черновик + .msg "
+              "(без регистрации)")
+    else:  # mix
+        known = sum(1 for d in docs if d["корр_найден"])
+        unknown_n = len(docs) - known
+        print(f"\nПервые 5:")
+        for i, d in enumerate(docs[:5], 1):
+            flag = 'OK' if d["корр_найден"] else '!!'
+            print(f"  {i}. [тип {d['тип_индекс']}] {flag} "
+                  f"{d['корреспондент'][:30]} | {d['тема'][:50]}")
+        print(f"\nВсего: {len(docs)}  (ФИО найдено: {known}, без ФИО: {unknown_n})")
+        print("режим: EMAIL/MIX  —  создание + регистрация + На резолюцию + .msg")
 
     if input("Начать? (да/нет): ").strip().lower() not in ("да", "д", "y", "yes", ""):
         sys.exit(0)
@@ -378,7 +421,6 @@ def main():
     # Настраиваем mix_flow.settings — он использует module-level global
     mix_flow.settings = settings
 
-    process_mode = os.environ.get('ASUD_EMAIL_PROCESS_MODE', 'mix')
     output_suffix = os.environ.get('ASUD_OUTPUT_SUFFIX') or None
     log.info(f"Логика обработки: {process_mode}"
              + (f", суффикс реестра: {output_suffix}" if output_suffix else ""))
