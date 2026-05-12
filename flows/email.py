@@ -180,9 +180,18 @@ def _list_root_msgs(folder_path):
         return []
 
 
-def _parse_one_msg(msg_path):
+def _parse_one_msg(msg_path, process_mode="mix"):
     """Парсит один .msg в doc_data dict. None если не получилось/пустое/брак.
-    Использует module-global settings."""
+
+    process_mode:
+      'mix'   — классификатор НЕ вызывается, тип всегда из settings
+                ('default_type_idx', по умолчанию 8). Корреспондент из ФИО в теле.
+      'smart' — вызывается classify_doc_type (для определения тип_индекс).
+                cat -1 → пропуск. cat 0 → тип 8 + force_draft.
+                Корреспондент всё равно будет затёрт в _process_doc на «Неизвестный...».
+
+    Использует module-global settings.
+    """
     unknown = settings.get("unknown_correspondent",
                             cfg.DEFAULTS["unknown_correspondent"])
 
@@ -203,21 +212,25 @@ def _parse_one_msg(msg_path):
         log.warning(f"Пустое письмо {os.path.basename(msg_path)} — пропускаю")
         return None
 
-    # Классификатор работает на ИСХОДНОМ body (до _clean_body) — так
-    # сохраняется точная реплика правил начальника и доступен From-header
-    # для fallback по домену.
-    type_idx = classify_doc_type(body)
+    # Тип документа: smart — через классификатор, mix — захардкодженный дефолт.
     force_draft = False
-    if type_idx == -1:
-        log.warning(f"{os.path.basename(msg_path)}: помечено классификатором "
-                    f"как 'случайно отправил' — пропускаю")
-        return None
-    if type_idx == 0:
-        # Классификатор не разобрался — тип 8 + всегда черновик
-        type_idx = 8
-        force_draft = True
-        log.info(f"{os.path.basename(msg_path)}: тип не определился → 8, "
-                 f"оставляю в черновике для ручной проверки")
+    if process_mode == "smart":
+        # Классификатор работает на ИСХОДНОМ body (до _clean_body) — так
+        # сохраняется точная реплика правил начальника и доступен From-header
+        # для fallback по домену.
+        type_idx = classify_doc_type(body)
+        if type_idx == -1:
+            log.warning(f"{os.path.basename(msg_path)}: помечено классификатором "
+                        f"как 'случайно отправил' — пропускаю")
+            return None
+        if type_idx == 0:
+            type_idx = 8
+            force_draft = True
+            log.info(f"{os.path.basename(msg_path)}: тип не определился → 8, "
+                     f"оставляю в черновике для ручной проверки")
+    else:
+        # mix-режим: классификатор не трогаем, используется только в smart
+        type_idx = settings.get("default_type_idx", 8)
     type_name = cfg.DOC_TYPE_MAP.get(
         type_idx, "Письма, заявления и жалобы граждан, акционеров")
 
@@ -226,8 +239,8 @@ def _parse_one_msg(msg_path):
     body_clean = mix_flow._clean_body(body) if body else clean_subject
 
     if force_draft:
-        # cat-0 fallback: принудительно черновик с фикс. корреспондентом,
-        # чтобы письмо точно ушло в DRAFT-ветку mix.create_one_document.
+        # Smart + cat-0: принудительно черновик с фикс. корреспондентом
+        # (чтобы письмо точно ушло в DRAFT-ветку mix.create_one_document).
         corr_found = False
         correspondent = unknown
         fio_src = ""
@@ -259,14 +272,15 @@ def _parse_one_msg(msg_path):
     }
 
 
-def load_emails(folder_path):
-    """Парсит все .msg в корне folder_path. Возвращает list of doc dicts."""
+def load_emails(folder_path, process_mode="mix"):
+    """Парсит все .msg в корне folder_path. Возвращает list of doc dicts.
+    process_mode пробрасывается в _parse_one_msg (см. его docstring)."""
     msg_files = _list_root_msgs(folder_path)
     log.info(f"Найдено .msg файлов: {len(msg_files)}")
 
     rows, skipped = [], 0
     for idx, msg_path in enumerate(msg_files, 1):
-        doc = _parse_one_msg(msg_path)
+        doc = _parse_one_msg(msg_path, process_mode)
         if doc is None:
             skipped += 1
             continue
@@ -377,8 +391,8 @@ def main():
 
     log.info(f"Папка писем: {folder}")
 
-    # Парсим письма
-    docs = load_emails(folder)
+    # Парсим письма (process_mode определяет, использовать ли классификатор)
+    docs = load_emails(folder, process_mode)
     if not docs:
         log.error("Нет .msg файлов или все пропущены")
         input("Enter...")
@@ -607,7 +621,7 @@ def daemon_main():
                     break
                 name = os.path.basename(msg_path)
 
-                doc = _parse_one_msg(msg_path)
+                doc = _parse_one_msg(msg_path, process_mode)
                 if doc is None:
                     # битый/пустой .msg — сразу в Ошибки чтобы не зацикливаться
                     move_to_errors(msg_path, folder,
