@@ -30,6 +30,7 @@ from shared.correspondent import extract_fio_from_text
 from shared.okrug_parser import okrug_from_textbody
 from shared.attachments import move_to_done, move_to_errors, move_to_drafts
 from shared.colors import green, yellow, red, status_colored
+from shared.classifier import classify_doc_type
 
 # Переиспользуем создание/регистрацию/output из mix
 from flows import mix as mix_flow
@@ -145,13 +146,10 @@ def _list_root_msgs(folder_path):
 
 
 def _parse_one_msg(msg_path):
-    """Парсит один .msg в doc_data dict. None если не получилось/пустое.
+    """Парсит один .msg в doc_data dict. None если не получилось/пустое/брак.
     Использует module-global settings."""
     unknown = settings.get("unknown_correspondent",
                             cfg.DEFAULTS["unknown_correspondent"])
-    type_idx = settings.get("default_type_idx", 8)
-    type_name = cfg.DOC_TYPE_MAP.get(
-        type_idx, "Письма, заявления и жалобы граждан, акционеров")
 
     try:
         msg = extract_msg.openMsg(msg_path)
@@ -170,13 +168,38 @@ def _parse_one_msg(msg_path):
         log.warning(f"Пустое письмо {os.path.basename(msg_path)} — пропускаю")
         return None
 
+    # Классификатор работает на ИСХОДНОМ body (до _clean_body) — так
+    # сохраняется точная реплика правил начальника и доступен From-header
+    # для fallback по домену.
+    type_idx = classify_doc_type(body)
+    force_draft = False
+    if type_idx == -1:
+        log.warning(f"{os.path.basename(msg_path)}: помечено классификатором "
+                    f"как 'случайно отправил' — пропускаю")
+        return None
+    if type_idx == 0:
+        # Классификатор не разобрался — тип 8 + всегда черновик
+        type_idx = 8
+        force_draft = True
+        log.info(f"{os.path.basename(msg_path)}: тип не определился → 8, "
+                 f"оставляю в черновике для ручной проверки")
+    type_name = cfg.DOC_TYPE_MAP.get(
+        type_idx, "Письма, заявления и жалобы граждан, акционеров")
+
     clean_subject = re.sub(r'^(FW:|RE:|Fwd:)\s*', '',
                             str(subject).strip(), flags=re.IGNORECASE)
     body_clean = mix_flow._clean_body(body) if body else clean_subject
 
-    fio, fio_src = extract_fio_from_text(body_clean)
-    correspondent = fio if fio else unknown
-    corr_found = bool(fio)
+    if force_draft:
+        # cat-0 fallback: принудительно черновик с фикс. корреспондентом,
+        # чтобы письмо точно ушло в DRAFT-ветку mix.create_one_document.
+        corr_found = False
+        correspondent = unknown
+        fio_src = ""
+    else:
+        fio, fio_src = extract_fio_from_text(body_clean)
+        correspondent = fio if fio else unknown
+        corr_found = bool(fio)
 
     try:
         okrug = okrug_from_textbody(body_clean, base_dir_fn=cfg.get_base_dir)
@@ -197,6 +220,7 @@ def _parse_one_msg(msg_path):
         "файл": msg_path,
         "округ_прогноз": okrug,
         "msg_date_prefix": _msg_date_prefix(msg_path),
+        "force_draft": force_draft,
     }
 
 
