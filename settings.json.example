@@ -5,12 +5,14 @@
     {
       "name": "ОЭК — Smart (черновики)",
       "mode": "smart",
-      "folder": "D:\\OutlookSubjects\\ОЭК"
+      "folder": "D:\\OutlookSubjects\\ОЭК",
+      "output_suffix": "ОЭК"
     },
     {
       "name": "ТЭС — Mix (с регистрацией)",
       "mode": "mix",
-      "folder": "D:\\OutlookSubjects\\ТЭС"
+      "folder": "D:\\OutlookSubjects\\ТЭС",
+      "output_suffix": "ТЭС"
     }
   ],
 
