@@ -107,6 +107,25 @@ def pick_source():
     return 'email' if choice == '2' else 'xlsx'
 
 
+def pick_preset(presets):
+    """Меню пресетов сценариев. Возвращает выбранный preset dict или None.
+    Если пользователь нажал Enter — берётся первый."""
+    print("\nВыбери сценарий:")
+    for i, p in enumerate(presets, 1):
+        name = p.get("name", "?")
+        folder = p.get("folder", "")
+        print(f"  {i}. {name}  ({folder})")
+    print(f"[Enter] = 1")
+    choice = input(f"Номер (1-{len(presets)}) или Enter: ").strip()
+    if not choice:
+        return presets[0]
+    try:
+        return presets[int(choice) - 1]
+    except (ValueError, IndexError):
+        log.warning(f"Неверный выбор '{choice}'")
+        return None
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="АСУД ИК — автоматизация документооборота")
@@ -127,11 +146,37 @@ def main():
         os.environ['ASUD_HEADLESS'] = '1'
         log.info("Режим: HEADLESS (Edge без GUI)")
 
+    # === Пресеты сценариев (из settings.json) ================================
+    # Если флагов нет И в settings.json есть presets — показываем меню.
+    # Иначе fallback на старое поведение (интерактивный выбор источника).
+    settings_data = cfg.load()
+    presets = settings_data.get("presets") or []
+    no_flags = not (args.mode or args.xlsx or args.folder)
+    if no_flags and presets:
+        preset = pick_preset(presets)
+        if preset is None:
+            log.error("Пресет не выбран — выход")
+            sys.exit(1)
+        log.info(f"Пресет: {preset.get('name', '?')}")
+        # Заполняем args из пресета и продолжаем обычный flow
+        if preset.get("folder"):
+            args.folder = preset["folder"]
+        if preset.get("mode"):
+            args.mode = preset["mode"]
+        # ASUD_EMAIL_PROCESS_MODE — для email-flow: 'mix' (текущая логика) или
+        # 'smart' (всегда черновик + фикс. корреспондент).
+        os.environ['ASUD_EMAIL_PROCESS_MODE'] = preset.get("mode", "mix")
+
     # === Определяем источник: email vs xlsx =================================
     if args.folder or args.mode == 'email':
         source = 'email'
     elif args.xlsx or args.mode in ('mix', 'auto-create', 'smart'):
-        source = 'xlsx'
+        # Если пришёл флаг 'smart' или 'mix' С --folder — это email-источник
+        # (пресет проставил оба), переопределяем
+        if args.folder:
+            source = 'email'
+        else:
+            source = 'xlsx'
     else:
         # Ничего не указано — спрашиваем
         source = pick_source()

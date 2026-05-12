@@ -27,6 +27,12 @@ DEFAULTS = {
     # email-daemon (--watch)
     "email_watch_interval_sec": 30,
     "email_max_retries": 3,
+    # Пресеты сценариев — список словарей с name + mode + folder.
+    # Пример:
+    #   [{"name": "ОЭК — Smart", "mode": "smart", "folder": "D:\\OutlookSubjects\\ОЭК"},
+    #    {"name": "ТЭС — Mix",   "mode": "mix",   "folder": "D:\\OutlookSubjects\\ТЭС"}]
+    # Если список пустой — fallback на интерактивный выбор источника.
+    "presets": [],
 }
 
 # Маппинг индекса из Excel → название вида в АСУД
