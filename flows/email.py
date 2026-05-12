@@ -82,12 +82,17 @@ _REGISTRY_HEADERS = ["Номер", "Link", "Округ", "Subject", "Body"]
 _REGISTRY_WIDTHS = {1: 18, 2: 22, 3: 8, 4: 50, 5: 80}
 
 
-def _dated_xlsx_path(base_dir, date_prefix):
-    """Путь к per-date реестру: Registered/YYYY-MM-DD_резолюции.xlsx.
-    Если date_prefix=None → _unknown_резолюции.xlsx (fallback)."""
+def _dated_xlsx_path(base_dir, date_prefix, suffix=None):
+    """Путь к per-date реестру.
+    Без suffix: Registered/YYYY-MM-DD_резолюции.xlsx
+    С suffix:   Registered/YYYY-MM-DD_<suffix>_резолюции.xlsx
+    Если date_prefix=None → _unknown_<...>.xlsx (fallback)."""
     registered_dir = os.path.join(base_dir, "Registered")
     os.makedirs(registered_dir, exist_ok=True)
-    name = (date_prefix or "_unknown") + "_резолюции.xlsx"
+    name = date_prefix or "_unknown"
+    if suffix:
+        name += f"_{suffix}"
+    name += "_резолюции.xlsx"
     return os.path.join(registered_dir, name)
 
 
@@ -253,7 +258,7 @@ def _print_doc_line(index, total, status, info=""):
 
 
 def _process_doc(driver, doc, base_dir, folder, index, total, in_daemon,
-                 process_mode="mix"):
+                 process_mode="mix", output_suffix=None):
     """Обрабатывает один doc: create_one_document → ветвление по статусу
     → запись в xlsx + перенос .msg.
 
@@ -261,6 +266,9 @@ def _process_doc(driver, doc, base_dir, folder, index, total, in_daemon,
       'mix'   — текущая логика: ФИО найдено → register, нет → DRAFT
       'smart' — всегда черновик: forсируем корр_найден=False + фикс. корреспондент;
                  DRAFT считается УСПЕХОМ → пишем в реестр и переносим в Завершено/
+
+    output_suffix — суффикс в имени per-date xlsx (для разделения реестров
+    при параллельных запусках двух пресетов).
 
     Возвращает финальный статус: 'OK' | 'DUPLICATE' | 'DRAFT' | 'FAILED'.
     in_daemon=True (mix-режим): DRAFT → перенос в Черновики/.
@@ -277,7 +285,8 @@ def _process_doc(driver, doc, base_dir, folder, index, total, in_daemon,
     status = mix_flow._last_result.get("status", "FAILED")
 
     if status == "OK":
-        xlsx_path = _dated_xlsx_path(base_dir, doc.get("msg_date_prefix"))
+        xlsx_path = _dated_xlsx_path(base_dir, doc.get("msg_date_prefix"),
+                                      output_suffix)
         _ensure_dated_xlsx(xlsx_path)
         _append_dated_row(xlsx_path, doc, asud_id)
         move_to_done(msg_path, folder)
@@ -288,7 +297,8 @@ def _process_doc(driver, doc, base_dir, folder, index, total, in_daemon,
         if process_mode == "smart":
             # Smart: черновик — это нормальный исход. Пишем в реестр (без АСУД-ID)
             # и переносим .msg в Завершено/.
-            xlsx_path = _dated_xlsx_path(base_dir, doc.get("msg_date_prefix"))
+            xlsx_path = _dated_xlsx_path(base_dir, doc.get("msg_date_prefix"),
+                                          output_suffix)
             _ensure_dated_xlsx(xlsx_path)
             _append_dated_row(xlsx_path, doc, asud_id or "")
             move_to_done(msg_path, folder)
@@ -369,7 +379,9 @@ def main():
     mix_flow.settings = settings
 
     process_mode = os.environ.get('ASUD_EMAIL_PROCESS_MODE', 'mix')
-    log.info(f"Логика обработки: {process_mode}")
+    output_suffix = os.environ.get('ASUD_OUTPUT_SUFFIX') or None
+    log.info(f"Логика обработки: {process_mode}"
+             + (f", суффикс реестра: {output_suffix}" if output_suffix else ""))
 
     try:
         url = settings.get("asud_url", cfg.DEFAULTS["asud_url"])
@@ -377,7 +389,7 @@ def main():
         driver.get(url)
         wait_asud_loaded(driver)
 
-        # Per-date реестры: Registered/YYYY-MM-DD_резолюции.xlsx.
+        # Per-date реестры: Registered/YYYY-MM-DD[_<suffix>]_резолюции.xlsx.
         # Каждый doc пишется в xlsx своей даты (из имени .msg).
         log.info(f"Per-date реестры в: {os.path.join(base_dir, 'Registered')}")
 
@@ -387,7 +399,8 @@ def main():
             try:
                 status = _process_doc(driver, doc, base_dir, folder,
                                        i, len(docs), in_daemon=False,
-                                       process_mode=process_mode)
+                                       process_mode=process_mode,
+                                       output_suffix=output_suffix)
                 if status == "OK":
                     done_count += 1
                 elif status == "DUPLICATE":
@@ -492,7 +505,9 @@ def daemon_main():
     max_retries = int(settings.get("email_max_retries",
                                     cfg.DEFAULTS["email_max_retries"]))
     process_mode = os.environ.get('ASUD_EMAIL_PROCESS_MODE', 'mix')
-    log.info(f"Логика обработки: {process_mode}")
+    output_suffix = os.environ.get('ASUD_OUTPUT_SUFFIX') or None
+    log.info(f"Логика обработки: {process_mode}"
+             + (f", суффикс реестра: {output_suffix}" if output_suffix else ""))
 
     # Папка
     folder = os.environ.get('ASUD_EMAIL_FOLDER')
@@ -564,7 +579,8 @@ def daemon_main():
                 try:
                     status = _process_doc(driver, doc, base_dir, folder,
                                            idx, len(queue), in_daemon=True,
-                                           process_mode=process_mode)
+                                           process_mode=process_mode,
+                                           output_suffix=output_suffix)
                     if status == "FAILED":
                         retry_count[name] = retry_count.get(name, 0) + 1
                         if retry_count[name] >= max_retries:
