@@ -3,13 +3,13 @@
 
   "presets": [
     {
-      "name": "ОЭК — Smart (черновики)",
-      "mode": "smart",
+      "name": "ОЭК — Mix (с регистрацией)",
+      "mode": "mix",
       "folder": "D:\\OutlookSubjects\\ОЭК"
     },
     {
-      "name": "ТЭС — Mix (с регистрацией)",
-      "mode": "mix",
+      "name": "ТЭС — Smart (черновики)",
+      "mode": "smart",
       "folder": "D:\\OutlookSubjects\\ТЭС"
     }
   ],

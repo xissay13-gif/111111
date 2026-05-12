@@ -28,17 +28,17 @@ DEFAULTS = {
     "email_watch_interval_sec": 30,
     "email_max_retries": 3,
     # Пресеты сценариев — список словарей с name + mode + folder.
-    # Зашиты дефолтные пути для ОЭК (smart) и ТЭС (mix). Чтобы переопределить
+    # Зашиты дефолтные пути для ОЭК (mix) и ТЭС (smart). Чтобы переопределить
     # без пересборки — создать settings.json рядом с exe (см. settings.json.example).
     "presets": [
         {
-            "name": "ОЭК — Smart (черновики)",
-            "mode": "smart",
+            "name": "ОЭК — Mix (с регистрацией)",
+            "mode": "mix",
             "folder": "D:\\OutlookSubjects\\ОЭК",
         },
         {
-            "name": "ТЭС — Mix (с регистрацией)",
-            "mode": "mix",
+            "name": "ТЭС — Smart (черновики)",
+            "mode": "smart",
             "folder": "D:\\OutlookSubjects\\ТЭС",
         },
     ],
