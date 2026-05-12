@@ -29,6 +29,7 @@ from shared.ui import wait_asud_loaded
 from shared.correspondent import extract_fio_from_text
 from shared.okrug_parser import okrug_from_textbody
 from shared.attachments import move_to_done, move_to_errors, move_to_drafts
+from shared.colors import green, yellow, red, status_colored
 
 # Переиспользуем создание/регистрацию/output из mix
 from flows import mix as mix_flow
@@ -219,6 +220,14 @@ def load_emails(folder_path):
 
 # ================= PROCESSING ONE DOC =================
 
+def _print_doc_line(index, total, status, info=""):
+    """Одна строка результата по документу — с цветным статусом в консоль.
+    OK — зелёный, DRAFT — жёлтый, FAILED — красный, DUPLICATE — без цвета."""
+    label = status_colored(status)
+    suffix = f" — {info}" if info else ""
+    print(f"  [{index}/{total}] {label}{suffix}")
+
+
 def _process_doc(driver, doc, base_dir, folder, index, total, in_daemon):
     """Обрабатывает один doc: create_one_document → ветвление по статусу
     → запись в xlsx + перенос .msg.
@@ -341,10 +350,13 @@ def main():
                     move_to_errors(msg_path, folder,
                                    f"Регистрация не удалась (status={status})")
                     err_count += 1
+                _print_doc_line(i, len(docs), status,
+                                 doc.get("тема", "")[:60])
             except Exception as e:
                 log.error(f"ОШИБКА документ {i}: {e}")
                 move_to_errors(msg_path, folder, f"Exception: {e}")
                 err_count += 1
+                _print_doc_line(i, len(docs), "FAILED", str(e)[:80])
                 try:
                     driver.get(url)
                     wait_asud_loaded(driver)
@@ -356,7 +368,8 @@ def main():
         elapsed = timedelta(seconds=int(elapsed_seconds))
         avg = (timedelta(seconds=int(elapsed_seconds / done_count))
                if done_count else None)
-        summary = [
+        # Лог-файл — плоский (без ANSI), консоль — цветной
+        plain = [
             "",
             "=" * 60,
             "ГОТОВО!",
@@ -367,9 +380,17 @@ def main():
             f"  Затрачено:    {elapsed}" + (f"  (в среднем {avg}/док)" if avg else ""),
             "=" * 60,
         ]
-        for line in summary:
+        for line in plain:
             log.info(line)
-            print(line)
+        print("")
+        print("=" * 60)
+        print("ГОТОВО!")
+        print(f"  Обработано:   {green(str(done_count))} / {len(docs)}  (→ Завершено/)")
+        print(f"  Дубликаты:    {dup_count}  (уже были в АСУД, → Завершено/)")
+        print(f"  В черновиках: {yellow(str(draft_count))}  (ФИО не найдено, .msg в корне)")
+        print(f"  Ошибок:       {red(str(err_count))}  (→ Ошибки/)")
+        print(f"  Затрачено:    {elapsed}" + (f"  (в среднем {avg}/док)" if avg else ""))
+        print("=" * 60)
         input("\nEnter для закрытия...")
     except Exception as e:
         log.error(f"Ошибка: {e}")
@@ -486,6 +507,8 @@ def daemon_main():
                                    "Не удалось распарсить или пустое")
                     totals["FAILED"] += 1
                     retry_count.pop(name, None)
+                    _print_doc_line(idx, len(queue), "FAILED",
+                                     "не распарсилось / пустое")
                     continue
 
                 try:
@@ -498,9 +521,13 @@ def daemon_main():
                                 f"Регистрация не удалась за {max_retries} попыток")
                             retry_count.pop(name, None)
                             totals["FAILED"] += 1
+                            _print_doc_line(idx, len(queue), "FAILED",
+                                             f"max_retries ({max_retries}) → Ошибки/")
                         else:
                             log.warning(f"{name}: фейл {retry_count[name]}/{max_retries} "
                                         f"— оставляю в корне на следующую итерацию")
+                            _print_doc_line(idx, len(queue), "FAILED",
+                                             f"retry {retry_count[name]}/{max_retries}")
                         try:
                             driver.get(url)
                             wait_asud_loaded(driver)
@@ -509,6 +536,8 @@ def daemon_main():
                     else:
                         totals[status] = totals.get(status, 0) + 1
                         retry_count.pop(name, None)
+                        _print_doc_line(idx, len(queue), status,
+                                         doc.get("тема", "")[:60])
                 except Exception as e:
                     log.error(f"Exception на {name}: {e}")
                     retry_count[name] = retry_count.get(name, 0) + 1
@@ -516,6 +545,7 @@ def daemon_main():
                         move_to_errors(msg_path, folder, f"Exception: {e}")
                         retry_count.pop(name, None)
                         totals["FAILED"] += 1
+                    _print_doc_line(idx, len(queue), "FAILED", str(e)[:80])
                     try:
                         driver.get(url)
                         wait_asud_loaded(driver)
@@ -527,6 +557,10 @@ def daemon_main():
             log.info(f"  итог итер. {totals['ITER']}: "
                      f"OK={totals['OK']} DUP={totals['DUPLICATE']} "
                      f"DRAFT={totals['DRAFT']} FAIL={totals['FAILED']}")
+            print(f"  итог итер. {totals['ITER']}: "
+                  f"OK={green(str(totals['OK']))} DUP={totals['DUPLICATE']} "
+                  f"DRAFT={yellow(str(totals['DRAFT']))} "
+                  f"FAIL={red(str(totals['FAILED']))}")
             _interruptible_sleep(interval)
 
         log.info("=" * 60)
@@ -537,6 +571,14 @@ def daemon_main():
         log.info(f"  Черновики:  {totals['DRAFT']}")
         log.info(f"  Ошибки:     {totals['FAILED']}")
         log.info("=" * 60)
+        print("=" * 60)
+        print("МОНИТОРИНГ ОСТАНОВЛЕН")
+        print(f"  Итераций:   {totals['ITER']}")
+        print(f"  Обработано: {green(str(totals['OK']))}")
+        print(f"  Дубликаты:  {totals['DUPLICATE']}")
+        print(f"  Черновики:  {yellow(str(totals['DRAFT']))}")
+        print(f"  Ошибки:     {red(str(totals['FAILED']))}")
+        print("=" * 60)
 
     finally:
         try:
