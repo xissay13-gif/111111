@@ -1,0 +1,22 @@
+{
+  "_comment": "Шаблон settings.json. Скопируй и переименуй в settings.json чтобы переопределить дефолты в exe. Любой ключ можно убрать — будет взято значение по умолчанию.",
+
+  "presets": [
+    {
+      "name": "ОЭК — Smart (черновики)",
+      "mode": "smart",
+      "folder": "D:\\OutlookSubjects\\ОЭК"
+    },
+    {
+      "name": "ТЭС — Mix (с регистрацией)",
+      "mode": "mix",
+      "folder": "D:\\OutlookSubjects\\ТЭС"
+    }
+  ],
+
+  "email_watch_interval_sec": 30,
+  "email_max_retries": 3,
+
+  "asud_url": "https://asud.interrao.ru/asudik/",
+  "unknown_correspondent": "Неизвестный Неизвестный Неизвестный"
+}

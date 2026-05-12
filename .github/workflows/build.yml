@@ -46,18 +46,18 @@ jobs:
         --hidden-import=flows.email
         app.py
 
-    - name: Copy headless launchers
+    - name: Copy launchers + settings template
       run: |
         copy asud_headless.bat dist\
-        copy asud_email_headless.bat dist\
         copy asud_email_watch.bat dist\
+        copy settings.json.example dist\
 
-    - name: Upload artifact (exe + bat)
+    - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
         name: asud
         path: |
           dist/asud.exe
           dist/asud_headless.bat
-          dist/asud_email_headless.bat
           dist/asud_email_watch.bat
+          dist/settings.json.example

@@ -28,11 +28,20 @@ DEFAULTS = {
     "email_watch_interval_sec": 30,
     "email_max_retries": 3,
     # Пресеты сценариев — список словарей с name + mode + folder.
-    # Пример:
-    #   [{"name": "ОЭК — Smart", "mode": "smart", "folder": "D:\\OutlookSubjects\\ОЭК"},
-    #    {"name": "ТЭС — Mix",   "mode": "mix",   "folder": "D:\\OutlookSubjects\\ТЭС"}]
-    # Если список пустой — fallback на интерактивный выбор источника.
-    "presets": [],
+    # Зашиты дефолтные пути для ОЭК (smart) и ТЭС (mix). Чтобы переопределить
+    # без пересборки — создать settings.json рядом с exe (см. settings.json.example).
+    "presets": [
+        {
+            "name": "ОЭК — Smart (черновики)",
+            "mode": "smart",
+            "folder": "D:\\OutlookSubjects\\ОЭК",
+        },
+        {
+            "name": "ТЭС — Mix (с регистрацией)",
+            "mode": "mix",
+            "folder": "D:\\OutlookSubjects\\ТЭС",
+        },
+    ],
 }
 
 # Маппинг индекса из Excel → название вида в АСУД
