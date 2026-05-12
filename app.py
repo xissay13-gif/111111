@@ -166,6 +166,10 @@ def main():
         # ASUD_EMAIL_PROCESS_MODE — для email-flow: 'mix' (текущая логика) или
         # 'smart' (всегда черновик + фикс. корреспондент).
         os.environ['ASUD_EMAIL_PROCESS_MODE'] = preset.get("mode", "mix")
+        # ASUD_OUTPUT_SUFFIX — суффикс в имени per-date xlsx (для разделения
+        # реестров при параллельных запусках двух .bat).
+        if preset.get("output_suffix"):
+            os.environ['ASUD_OUTPUT_SUFFIX'] = preset["output_suffix"]
 
     # === Определяем источник: email vs xlsx =================================
     if args.folder or args.mode == 'email':
