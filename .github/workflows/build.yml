@@ -39,6 +39,7 @@ jobs:
         --hidden-import=shared.attachments
         --hidden-import=shared.okrug_parser
         --hidden-import=shared.colors
+        --hidden-import=shared.classifier
         --hidden-import=flows.mix
         --hidden-import=flows.auto_create
         --hidden-import=flows.smart
