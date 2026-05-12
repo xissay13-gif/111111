@@ -228,15 +228,27 @@ def _print_doc_line(index, total, status, info=""):
     print(f"  [{index}/{total}] {label}{suffix}")
 
 
-def _process_doc(driver, doc, base_dir, folder, index, total, in_daemon):
+def _process_doc(driver, doc, base_dir, folder, index, total, in_daemon,
+                 process_mode="mix"):
     """Обрабатывает один doc: create_one_document → ветвление по статусу
     → запись в xlsx + перенос .msg.
 
+    process_mode:
+      'mix'   — текущая логика: ФИО найдено → register, нет → DRAFT
+      'smart' — всегда черновик: forсируем корр_найден=False + фикс. корреспондент;
+                 DRAFT считается УСПЕХОМ → пишем в реестр и переносим в Завершено/
+
     Возвращает финальный статус: 'OK' | 'DUPLICATE' | 'DRAFT' | 'FAILED'.
-    in_daemon=True: DRAFT → перенос в Черновики/ (чтобы daemon не молотил
-                    его повторно). False: оставляем в корне.
+    in_daemon=True (mix-режим): DRAFT → перенос в Черновики/.
     """
     msg_path = doc.get("файл")
+
+    if process_mode == "smart":
+        # Smart-пресет: каждый .msg создаётся как черновик с фикс. корреспондентом
+        doc["корр_найден"] = False
+        doc["корреспондент"] = settings.get("unknown_correspondent",
+                                             cfg.DEFAULTS["unknown_correspondent"])
+
     asud_id = mix_flow.create_one_document(driver, doc, index, total)
     status = mix_flow._last_result.get("status", "FAILED")
 
@@ -249,10 +261,18 @@ def _process_doc(driver, doc, base_dir, folder, index, total, in_daemon):
         log.info(f"Документ {index}: уже зарегистрирован — .msg в Завершено/")
         move_to_done(msg_path, folder)
     elif status == "DRAFT":
-        if in_daemon:
+        if process_mode == "smart":
+            # Smart: черновик — это нормальный исход. Пишем в реестр (без АСУД-ID)
+            # и переносим .msg в Завершено/.
+            xlsx_path = _dated_xlsx_path(base_dir, doc.get("msg_date_prefix"))
+            _ensure_dated_xlsx(xlsx_path)
+            _append_dated_row(xlsx_path, doc, asud_id or "")
+            move_to_done(msg_path, folder)
+            log.info(f"Документ {index}: создан как черновик (smart) — .msg в Завершено/")
+        elif in_daemon:
             log.info(f"Документ {index}: ФИО не найдено — .msg в Черновики/")
             move_to_drafts(msg_path, folder)
-        # one-shot: оставляем в корне как и было
+        # one-shot mix: оставляем в корне как и было
     else:  # FAILED — caller сам решает что делать (retry / move-to-errors)
         pass
 
@@ -324,6 +344,9 @@ def main():
     # Настраиваем mix_flow.settings — он использует module-level global
     mix_flow.settings = settings
 
+    process_mode = os.environ.get('ASUD_EMAIL_PROCESS_MODE', 'mix')
+    log.info(f"Логика обработки: {process_mode}")
+
     try:
         url = settings.get("asud_url", cfg.DEFAULTS["asud_url"])
         log.info(f"Открываю {url}")
@@ -339,7 +362,8 @@ def main():
             msg_path = doc.get("файл")
             try:
                 status = _process_doc(driver, doc, base_dir, folder,
-                                       i, len(docs), in_daemon=False)
+                                       i, len(docs), in_daemon=False,
+                                       process_mode=process_mode)
                 if status == "OK":
                     done_count += 1
                 elif status == "DUPLICATE":
@@ -443,6 +467,8 @@ def daemon_main():
                                 cfg.DEFAULTS["email_watch_interval_sec"]))
     max_retries = int(settings.get("email_max_retries",
                                     cfg.DEFAULTS["email_max_retries"]))
+    process_mode = os.environ.get('ASUD_EMAIL_PROCESS_MODE', 'mix')
+    log.info(f"Логика обработки: {process_mode}")
 
     # Папка
     folder = os.environ.get('ASUD_EMAIL_FOLDER')
@@ -513,7 +539,8 @@ def daemon_main():
 
                 try:
                     status = _process_doc(driver, doc, base_dir, folder,
-                                           idx, len(queue), in_daemon=True)
+                                           idx, len(queue), in_daemon=True,
+                                           process_mode=process_mode)
                     if status == "FAILED":
                         retry_count[name] = retry_count.get(name, 0) + 1
                         if retry_count[name] >= max_retries:
