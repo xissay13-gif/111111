@@ -1,0 +1,24 @@
+15:46:24.779 [INFO] asud: Подробный лог пишется в: C:\Users\kokhiya_av\Desktop\background_test_nogui_monitor — копия\Logs\asud_email_20260514_154624.txt
+15:46:24.780 [INFO] asud: Сон Windows заблокирован на время работы
+15:46:24.780 [INFO] asud: ==================================================
+15:46:24.780 [INFO] asud: АСУД ИК — Email-direct (создание из .msg-писем)
+15:46:24.781 [INFO] asud: ==================================================
+15:46:24.781 [INFO] asud: Папка писем: D:\OutlookSubjects\ТЭС
+15:46:24.784 [INFO] asud: Найдено .msg файлов: 11
+15:46:24.792 [DEBUG] tzlocal: Looking up time zone info from registry
+15:46:24.839 [INFO] asud.okrug: Street index: 828 улиц
+15:46:25.429 [INFO] asud: Загружено: 11 писем, пропущено: 0
+15:46:29.918 [INFO] asud: Edge запущен в HEADLESS режиме
+15:46:29.921 [DEBUG] selenium.webdriver.common.driver_finder: Skipping Selenium Manager; path to MicrosoftEdge driver specified in Service class: C:\Users\kokhiya_av\Desktop\background_test_nogui_monitor — копия\msedgedriver.exe
+15:46:31.258 [DEBUG] selenium.webdriver.common.service: Started executable: `C:\Users\kokhiya_av\Desktop\background_test_nogui_monitor — копия\msedgedriver.exe` in a child process with pid: 5836 using 0 to output -3
+15:46:31.391 [DEBUG] selenium.webdriver.remote.remote_connection: POST http://localhost:64312/session {'capabilities': {'firstMatch': [{}], 'alwaysMatch': {'browserName': 'MicrosoftEdge', 'pageLoadStrategy': 'eager', 'ms:edgeOptions': {'excludeSwitches': ['enable-logging'], 'extensions': [], 'args': ['--headless=new', '--window-size=1920,1080', '--auth-server-whitelist=*.interrao.ru', '--auth-negotiate-delegate-whitelist=*.interrao.ru', '--log-level=3']}}}}
+15:46:31.392 [DEBUG] urllib3.connectionpool: Starting new HTTP connection (1): localhost:64312
+15:46:53.438 [DEBUG] urllib3.connectionpool: http://localhost:64312 "POST /session HTTP/1.1" 200 0
+15:46:53.438 [DEBUG] selenium.webdriver.remote.remote_connection: Remote response: status=200 | data={"value":{"capabilities":{"acceptInsecureCerts":false,"browserName":"MicrosoftEdge","browserVersion":"146.0.3856.62","fedcm:accounts":true,"goog:processID":920,"ms:edgeOptions":{"debuggerAddress":"localhost:64315"},"msedge":{"msedgedriverVersion":"146.0.3856.62 (f2c63c965af6e83261f6df9c431217c8dbb3573e)","userDataDir":"C:\\Users\\KOKHIY~1\\AppData\\Local\\Temp\\scoped_dir5836_425244685"},"networkConnectionEnabled":false,"pageLoadStrategy":"eager","platformName":"windows","proxy":{},"setWindowRect":true,"strictFileInteractability":false,"timeouts":{"implicit":0,"pageLoad":300000,"script":30000},"unhandledPromptBehavior":"dismiss and notify","webauthn:extension:credBlob":true,"webauthn:extension:largeBlob":true,"webauthn:extension:minPinLength":true,"webauthn:extension:prf":true,"webauthn:virtualAuthenticators":true},"sessionId":"f6c975041b3ad7746812dbc60f51e65a"}} | headers=HTTPHeaderDict({'Content-Length': '875', 'Content-Type': 'application/json; charset=utf-8', 'cache-control': 'no-cache'})
+15:46:53.438 [DEBUG] selenium.webdriver.remote.remote_connection: Finished Request
+15:46:53.438 [INFO] asud: Логика обработки: mix, суффикс реестра: ТЭС
+15:46:53.439 [INFO] asud: Открываю https://asud.interrao.ru/asudik/
+15:46:53.440 [DEBUG] selenium.webdriver.remote.remote_connection: POST http://localhost:64312/session/f6c975041b3ad7746812dbc60f51e65a/url {'url': 'https://asud.interrao.ru/asudik/'}
+15:48:53.453 [ERROR] asud: Ошибка: HTTPConnectionPool(host='localhost', port=64312): Read timed out. (read timeout=120)
+15:49:01.551 [DEBUG] selenium.webdriver.remote.remote_connection: DELETE http://localhost:64312/session/f6c975041b3ad7746812dbc60f51e65a {}
+15:49:01.551 [DEBUG] urllib3.connectionpool: Starting new HTTP connection (2): localhost:64312
