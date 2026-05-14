@@ -25,7 +25,7 @@ from selenium import webdriver
 from selenium.webdriver.edge.service import Service as EdgeService
 
 from shared import config as cfg
-from shared.ui import wait_asud_loaded
+from shared.ui import wait_asud_loaded, set_driver_timeout
 from shared.correspondent import extract_fio_from_text
 from shared.okrug_parser import okrug_from_textbody
 from shared.attachments import move_to_done, move_to_errors, move_to_drafts
@@ -431,6 +431,8 @@ def main():
     options = cfg.build_edge_options()
     service = EdgeService(executable_path=driver_path)
     driver = webdriver.Edge(service=service, options=options)
+    set_driver_timeout(driver, settings.get("asud_load_timeout_sec",
+                                              cfg.DEFAULTS["asud_load_timeout_sec"]))
 
     # Настраиваем mix_flow.settings — он использует module-level global
     mix_flow.settings = settings
@@ -593,6 +595,8 @@ def daemon_main():
     options = cfg.build_edge_options()
     service = EdgeService(executable_path=driver_path)
     driver = webdriver.Edge(service=service, options=options)
+    set_driver_timeout(driver, settings.get("asud_load_timeout_sec",
+                                              cfg.DEFAULTS["asud_load_timeout_sec"]))
     mix_flow.settings = settings
 
     signal.signal(signal.SIGINT, _on_sigint)

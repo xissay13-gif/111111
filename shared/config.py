@@ -27,6 +27,9 @@ DEFAULTS = {
     # email-daemon (--watch)
     "email_watch_interval_sec": 30,
     "email_max_retries": 3,
+    # Таймаут загрузки страниц ASUD (page_load + urllib3 client). 300с = 5 минут.
+    # Поднят с дефолтных 120с т.к. ASUD иногда долго инициализируется.
+    "asud_load_timeout_sec": 300,
     # Пресеты сценариев — список словарей с name + mode + folder.
     # Зашиты дефолтные пути для ОЭК (smart) и ТЭС (mix). Чтобы переопределить
     # без пересборки — создать settings.json рядом с exe (см. settings.json.example).

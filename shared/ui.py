@@ -109,6 +109,35 @@ def find_input_near_label(driver, label_text):
     return driver.execute_script(_FIND_INPUT_JS, label_text)
 
 
+def set_driver_timeout(driver, seconds):
+    """Устанавливает таймауты на работу с Edge:
+      - page load (для driver.get при медленной загрузке страниц)
+      - urllib3 client timeout (Selenium ↔ webdriver HTTP-запросы)
+
+    Дефолт Selenium для urllib3 — 120с, для page_load — 300с. Этот хелпер
+    унифицирует оба. Пробует несколько вариантов API из-за разных версий
+    Selenium 4.x (set_page_load_timeout / command_executor._client_config).
+    """
+    try:
+        driver.set_page_load_timeout(seconds)
+    except Exception as e:
+        log.debug(f"set_page_load_timeout не сработал: {e}")
+    # urllib3 client timeout — пути отличаются между версиями Selenium
+    for attr_path in (
+        ('command_executor', '_client_config', 'timeout'),
+        ('command_executor', '_conn', 'timeout'),
+    ):
+        try:
+            obj = driver
+            for a in attr_path[:-1]:
+                obj = getattr(obj, a)
+            setattr(obj, attr_path[-1], seconds)
+            log.debug(f"urllib3 timeout установлен через {'.'.join(attr_path)}")
+            break
+        except Exception:
+            continue
+
+
 def wait_asud_loaded(driver, max_wait=120):
     """Адаптивное ожидание полной загрузки АСУД."""
     log.info("Жду загрузку АСУД...")

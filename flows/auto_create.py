@@ -32,7 +32,8 @@ from shared import config as cfg
 from shared.ui import (click, wait_and_click, find_input_near_label,
                 wait_asud_loaded, wait_modal_closed, close_open_modals,
                 js_set_value, js_type_combobox, find_dropdown_options,
-                wait_pointer_events_auto, is_duplicate_warning)
+                wait_pointer_events_auto, is_duplicate_warning,
+                set_driver_timeout)
 from shared.correspondent import (fill_correspondent_field, match_correspondent)
 from shared.attachments import get_dummy_msg, attach_content
 
@@ -818,6 +819,8 @@ def main():
     options = cfg.build_edge_options()
 
     driver = webdriver.Edge(service=EdgeService(executable_path=driver_path), options=options)
+    set_driver_timeout(driver, settings.get("asud_load_timeout_sec",
+                                              cfg.DEFAULTS["asud_load_timeout_sec"]))
 
     try:
         url = settings.get("asud_url", cfg.DEFAULTS["asud_url"])
